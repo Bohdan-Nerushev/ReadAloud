@@ -5,6 +5,13 @@ A text-to-speech application that converts text files to MP3 audio using gTTS.
 """
 
 import sys
+from pathlib import Path
+
+# Add project root to sys.path to resolve 'src' package
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.gui.main_window import MainWindow
 from src.application.app_controller import ApplicationController

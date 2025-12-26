@@ -17,18 +17,18 @@ A professional desktop application for converting text files to MP3 audio using 
 - **Operating System**: Linux (Ubuntu/Debian recommended)
 - **FFmpeg**: Required for audio processing
 
-### Installing FFmpeg
+### Installing System Dependencies (FFmpeg, libxcb-cursor)
 
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install ffmpeg
+sudo apt-get install ffmpeg libxcb-cursor0
 
 # Fedora
-sudo dnf install ffmpeg
+sudo dnf install ffmpeg libxcb-cursor
 
 # Arch Linux
-sudo pacman -S ffmpeg
+sudo pacman -S ffmpeg libxcb-cursor
 ```
 
 ## Installation
@@ -136,9 +136,14 @@ Install FFmpeg using the instructions in System Requirements section.
 - The application will automatically retry failed chunks
 
 ### Application won't start
-Ensure Python 3.10+ is installed:
+1. Ensure Python 3.10+ is installed:
 ```bash
 python --version
+```
+
+2. If you see "Could not load the Qt platform plugin xcb", install the missing library:
+```bash
+sudo apt-get install libxcb-cursor0
 ```
 
 ## Architecture

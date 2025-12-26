@@ -34,4 +34,5 @@ if ! command -v ffmpeg &> /dev/null; then
 fi
 
 echo "Starting ReadAloud application..."
+export PYTHONPATH=$PYTHONPATH:.
 ./venv/bin/python src/main.py

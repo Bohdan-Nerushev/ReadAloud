@@ -58,6 +58,7 @@ class ApplicationController(QObject):
         
         self._progress_timer = QTimer()
         self._progress_timer.timeout.connect(self._update_progress_display)
+        self._completion_timer: Optional[QTimer] = None
     
     def start_generation(
             self,
@@ -148,6 +149,8 @@ class ApplicationController(QObject):
             self._thread_manager.stop()
         
         self._progress_timer.stop()
+        if self._completion_timer:
+            self._completion_timer.stop()
         
         try:
             temp_dirs = []
@@ -245,7 +248,7 @@ class ApplicationController(QObject):
             eta = self._progress_tracker.get_eta_string()
             
             self.progressUpdated.emit(
-                completed,
+                self._progress_tracker.get_processed_count(),
                 total,
                 eta
             )
@@ -262,10 +265,12 @@ class ApplicationController(QObject):
         """
         def check_completion() -> None:
             if self._progress_tracker and not self._is_stopped:
-                completed = self._progress_tracker.get_completed_count()
+                processed = self._progress_tracker.get_processed_count()
                 total = self._progress_tracker.get_total_count()
                 
-                if completed >= total:
+                if processed >= total:
+                    if self._completion_timer:
+                        self._completion_timer.stop()
                     self._progress_timer.stop()
                     self._finalize_generation(config)
         
@@ -319,6 +324,12 @@ class ApplicationController(QObject):
                 self.generationCompleted.emit(
                     str(output_path)
                 )
+                
+                failed_count = self._progress_tracker.get_failed_count()
+                if failed_count > 0:
+                    self.errorOccurred.emit(
+                        f"Warning: {failed_count} chunks failed to generate and were skipped."
+                    )
             else:
                 self.errorOccurred.emit(
                     "No audio files were generated successfully"

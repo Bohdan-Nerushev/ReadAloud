@@ -67,7 +67,7 @@ class ProgressTracker:
             self
     ) -> float:
         """
-        Calculates the current progress percentage.
+        Calculates the current progress percentage based on processed items.
         
         Returns:
             Progress percentage (0.0 to 100.0)
@@ -75,7 +75,8 @@ class ProgressTracker:
         with self._lock:
             if self._total_chunks == 0:
                 return 0.0
-            return (self._completed_chunks / self._total_chunks) * 100.0
+            processed = self._completed_chunks + self._failed_chunks
+            return (processed / self._total_chunks) * 100.0
     
     def get_completed_count(
             self
@@ -147,3 +148,27 @@ class ProgressTracker:
         seconds = total_seconds % 60
         
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    def get_processed_count(
+            self
+    ) -> int:
+        """
+        Returns the number of processed chunks (success + failure).
+        
+        Returns:
+            Count of processed chunks
+        """
+        with self._lock:
+            return self._completed_chunks + self._failed_chunks
+    
+    def get_failed_count(
+            self
+    ) -> int:
+        """
+        Returns the number of failed chunks.
+        
+        Returns:
+            Count of failed chunks
+        """
+        with self._lock:
+            return self._failed_chunks
