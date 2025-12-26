@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual environment
+venv/
+ENV/
+env/
+
+# PyCharm/VSCode
+.idea/
+.vscode/
+
+# Audio/Text temp folders
+*_text/
+*_audio/
+
+# Final outputs
+final/
+
+# System files
+.DS_Store
+*.log
