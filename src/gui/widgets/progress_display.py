@@ -28,6 +28,7 @@ class ProgressDisplayWidget(QWidget):
         """
         super().__init__(parent)
         self._setup_ui()
+        self.setMinimumHeight(Styles.PROGRESS_WIDGET_MIN_HEIGHT)
         self.hide()
     
     def _setup_ui(
@@ -38,6 +39,7 @@ class ProgressDisplayWidget(QWidget):
         layout.setSpacing(Styles.SPACING_MEDIUM)
         
         self._progress_bar = QProgressBar()
+        self._progress_bar.setStyleSheet(Styles.PROGRESS_BAR_STYLE)
         self._progress_bar.setMinimum(0)
         self._progress_bar.setMaximum(100)
         self._progress_bar.setValue(0)

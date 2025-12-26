@@ -69,6 +69,13 @@ class AudioAssembler:
                 )
                 combined += audio_segment
             
+            # Increase playback speed by 1.25x
+            combined = combined.speedup(
+                playback_speed=1.25,
+                chunk_size=150,
+                crossfade=25
+            )
+            
             combined.export(
                 str(output_file_path),
                 format="mp3"

@@ -43,6 +43,7 @@ class ProjectInputWidget(QWidget):
         layout.addWidget(label)
         
         self._input = QLineEdit()
+        self._input.setStyleSheet(Styles.INPUT_STYLE)
         self._input.setPlaceholderText("Enter project name...")
         self._input.textChanged.connect(self._on_text_changed)
         layout.addWidget(self._input)

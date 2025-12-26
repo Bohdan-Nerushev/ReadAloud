@@ -51,12 +51,14 @@ def main() -> None:
             
             language = window.language_selector.get_selected_language()
             thread_count = window.thread_selector.get_thread_count()
+            output_dir = window.output_selector.get_selected_directory()
             
             config = ProjectConfig(
                 project_name=project_name,
                 input_file_path=input_file,
                 language=language,
-                thread_count=thread_count
+                thread_count=thread_count,
+                output_dir_path=output_dir
             )
             
             window.progress_display.reset()

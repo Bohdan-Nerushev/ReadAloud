@@ -34,15 +34,19 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Sets up the user interface components."""
         self.setWindowTitle("ReadAloud - Text to Speech")
-        self.setMinimumSize(
+        
+        # Set fixed window size
+        self.setFixedSize(
             Styles.WINDOW_MIN_WIDTH,
             Styles.WINDOW_MIN_HEIGHT
         )
         
         central_widget = QWidget()
+        central_widget.setStyleSheet(Styles.MAIN_WINDOW_STYLE)
         self.setCentralWidget(central_widget)
         
-        main_layout = QVBoxLayout()
+        # Main layout without scroll area
+        main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(
             Styles.MARGIN,
             Styles.MARGIN,
@@ -56,24 +60,46 @@ class MainWindow(QMainWindow):
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(title_label)
         
+        # Configuration Card
+        config_card = QWidget()
+        config_card.setObjectName("ConfigCard")
+        config_card.setStyleSheet(Styles.CARD_STYLE)
+        card_layout = QVBoxLayout(config_card)
+        card_layout.setContentsMargins(
+            Styles.MARGIN, 
+            Styles.MARGIN, 
+            Styles.MARGIN, 
+            Styles.MARGIN
+        )
+        card_layout.setSpacing(Styles.SPACING_LARGE)
+        
         self.project_input = ProjectInputWidget()
-        main_layout.addWidget(self.project_input)
+        card_layout.addWidget(self.project_input)
         
         self.file_selector = FileSelectorWidget()
-        main_layout.addWidget(self.file_selector)
+        card_layout.addWidget(self.file_selector)
+        
+        from src.gui.widgets.output_selector import OutputSelectorWidget
+        self.output_selector = OutputSelectorWidget()
+        card_layout.addWidget(self.output_selector)
         
         self.language_selector = LanguageSelectorWidget()
-        main_layout.addWidget(self.language_selector)
+        card_layout.addWidget(self.language_selector)
         
         self.thread_selector = ThreadSelectorWidget()
-        main_layout.addWidget(self.thread_selector)
+        card_layout.addWidget(self.thread_selector)
         
+        main_layout.addWidget(config_card)
+        
+        # Progress area
         self.progress_display = ProgressDisplayWidget()
+        # Ensure progress display takes up space even when hidden or use a placeholder
+        # Here we just add it to layout. Detailed visibility is handled by widget itself
         main_layout.addWidget(self.progress_display)
         
+        # Spacer to push controls to bottom
         main_layout.addStretch()
         
+        # Bottom controls
         self.control_buttons = ControlButtonsWidget()
         main_layout.addWidget(self.control_buttons)
-        
-        central_widget.setLayout(main_layout)

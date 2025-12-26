@@ -24,6 +24,7 @@ class ProjectConfig:
     input_file_path: str
     language: str
     thread_count: int
+    output_dir_path: str
 
     def __post_init__(
             self
@@ -66,6 +67,22 @@ class ProjectConfig:
         if not 1 <= self.thread_count <= 5:
             raise ValueError(
                 f"Thread count must be between 1 and 5, got: {self.thread_count}"
+            )
+            
+        if not self.output_dir_path:
+            raise ValueError(
+                "Output directory path cannot be empty"
+            )
+            
+        output_dir = Path(self.output_dir_path)
+        if not output_dir.exists():
+            raise ValueError(
+                f"Output directory does not exist: {self.output_dir_path}"
+            )
+        
+        if not output_dir.is_dir():
+            raise ValueError(
+                f"Output path is not a directory: {self.output_dir_path}"
             )
 
 

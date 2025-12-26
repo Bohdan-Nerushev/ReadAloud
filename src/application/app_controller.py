@@ -291,10 +291,9 @@ class ApplicationController(QObject):
             config: Project configuration
         """
         try:
-            workspace_dir = str(
-                Path(config.input_file_path).parent
-            )
-            final_dir = Path(workspace_dir) / "final"
+            # Create 'final' subdirectory in the selected output folder
+            base_output_dir = Path(config.output_dir_path)
+            final_dir = base_output_dir / "final"
             self._file_manager.ensure_directory_exists(
                 str(final_dir)
             )

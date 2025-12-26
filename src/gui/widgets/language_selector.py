@@ -50,6 +50,7 @@ class LanguageSelectorWidget(QWidget):
         layout.addWidget(label)
         
         self._combo = QComboBox()
+        self._combo.setStyleSheet(Styles.INPUT_STYLE)
         for language_name in self.LANGUAGES.keys():
             self._combo.addItem(language_name)
         

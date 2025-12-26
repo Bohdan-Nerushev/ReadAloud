@@ -43,6 +43,7 @@ class ThreadSelectorWidget(QWidget):
         layout.addWidget(label)
         
         self._spinbox = QSpinBox()
+        self._spinbox.setStyleSheet(Styles.INPUT_STYLE)
         self._spinbox.setMinimum(1)
         self._spinbox.setMaximum(5)
         self._spinbox.setValue(1)

@@ -5,7 +5,7 @@ This module provides a widget for selecting input text files.
 """
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 from src.gui.styles import Styles
 
 
@@ -47,7 +47,7 @@ class FileSelectorWidget(QWidget):
         file_row.setSpacing(Styles.SPACING_MEDIUM)
         
         self._file_label = QLabel("No file selected")
-        self._file_label.setStyleSheet("color: #999999; font-style: italic;")
+        self._file_label.setStyleSheet(Styles.LABEL_FILE_DISPLAY + "color: #666666; font-style: italic;")
         file_row.addWidget(self._file_label, stretch=1)
         
         self._select_button = QPushButton("Browse...")
@@ -72,8 +72,18 @@ class FileSelectorWidget(QWidget):
         
         if file_path:
             self._selected_file = file_path
-            self._file_label.setText(file_path)
-            self._file_label.setStyleSheet("color: #333333;")
+            
+            # Elide long path
+            metrics = self._file_label.fontMetrics()
+            elided_path = metrics.elidedText(
+                file_path, 
+                Qt.TextElideMode.ElideRight, 
+                self._file_label.width() - 10
+            )
+            self._file_label.setText(elided_path)
+            self._file_label.setToolTip(file_path) # Show full path on hover
+            
+            self._file_label.setStyleSheet(Styles.LABEL_FILE_DISPLAY)
             self.fileSelected.emit(file_path)
     
     def get_selected_file(
@@ -93,4 +103,4 @@ class FileSelectorWidget(QWidget):
         """Clears the file selection."""
         self._selected_file = ""
         self._file_label.setText("No file selected")
-        self._file_label.setStyleSheet("color: #999999; font-style: italic;")
+        self._file_label.setStyleSheet(Styles.LABEL_FILE_DISPLAY + "color: #999999; font-style: italic;")
