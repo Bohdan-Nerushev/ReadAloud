@@ -1,0 +1,13 @@
+This is a sample text file for testing the ReadAloud application. It contains multiple sentences to demonstrate text processing, chunking, and audio generation capabilities.
+
+The application will automatically process this text by removing special characters like quotes and asterisks. It will also handle newlines properly by converting them to spaces.
+
+Here are some special characters that will be processed: "double quotes", 'single quotes', *** asterisks ***, and ====== equal signs ======.
+
+This text is long enough to be split into multiple chunks. Each chunk will be approximately 180 characters long, respecting word boundaries. The chunking algorithm ensures that words are not split in the middle, maintaining natural speech flow.
+
+Multi-threading allows faster generation. You can choose between 1 and 5 threads depending on your needs and internet connection stability.
+
+The final audio file will be a seamless concatenation of all individual chunks, creating one continuous MP3 file that you can listen to.
+
+Thank you for testing the ReadAloud application!
