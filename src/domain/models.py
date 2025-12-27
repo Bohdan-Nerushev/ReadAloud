@@ -23,6 +23,7 @@ class ProjectConfig:
     project_name: str
     input_file_path: str
     language: str
+    gender: str
     thread_count: int
     output_dir_path: str
 
@@ -64,9 +65,15 @@ class ProjectConfig:
                 f"Language must be one of {allowed_languages}, got: {self.language}"
             )
         
-        if not 1 <= self.thread_count <= 5:
+        allowed_genders = {"male", "female"}
+        if self.gender not in allowed_genders:
             raise ValueError(
-                f"Thread count must be between 1 and 5, got: {self.thread_count}"
+                f"Gender must be one of {allowed_genders}, got: {self.gender}"
+            )
+        
+        if not 1 <= self.thread_count <= 15:
+            raise ValueError(
+                f"Thread count must be between 1 and 15, got: {self.thread_count}"
             )
             
         if not self.output_dir_path:

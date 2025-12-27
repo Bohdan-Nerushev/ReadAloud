@@ -118,7 +118,8 @@ class ApplicationController(QObject):
                 self._thread_manager.submit_task(
                     self._generate_chunk_audio,
                     chunk,
-                    config.language
+                    config.language,
+                    config.gender
                 )
             
             self._progress_timer.start(500)
@@ -208,7 +209,8 @@ class ApplicationController(QObject):
     def _generate_chunk_audio(
             self,
             chunk: AudioChunk,
-            language: str
+            language: str,
+            gender: str
     ) -> None:
         """
         Generates audio for a single chunk with retry logic.
@@ -216,6 +218,7 @@ class ApplicationController(QObject):
         Args:
             chunk: The chunk to convert to audio
             language: Language code for synthesis
+            gender: Gender of the voice
         """
         if self._is_stopped:
             return
@@ -225,6 +228,7 @@ class ApplicationController(QObject):
                 self._audio_generator.generate_audio,
                 chunk,
                 language,
+                gender,
                 self._audio_dir,
                 max_retries=5,
                 backoff=2.0

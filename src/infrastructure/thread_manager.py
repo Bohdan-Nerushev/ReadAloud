@@ -39,9 +39,9 @@ class ThreadManager:
         Raises:
             ValueError: If thread_count is not between 1 and 5
         """
-        if not 1 <= thread_count <= 5:
+        if not 1 <= thread_count <= 15:
             raise ValueError(
-                f"Thread count must be between 1 and 5, got: {thread_count}"
+                f"Thread count must be between 1 and 15, got: {thread_count}"
             )
         
         self._thread_count: int = thread_count

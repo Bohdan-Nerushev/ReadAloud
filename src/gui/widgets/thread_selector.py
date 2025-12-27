@@ -38,14 +38,14 @@ class ThreadSelectorWidget(QWidget):
         layout = QVBoxLayout()
         layout.setSpacing(Styles.SPACING_SMALL)
         
-        label = QLabel("Number of Threads (1-5):")
+        label = QLabel("Number of Threads (1-15):")
         label.setStyleSheet(Styles.LABEL_FIELD)
         layout.addWidget(label)
         
         self._spinbox = QSpinBox()
         self._spinbox.setStyleSheet(Styles.INPUT_STYLE)
         self._spinbox.setMinimum(1)
-        self._spinbox.setMaximum(5)
+        self._spinbox.setMaximum(15)
         self._spinbox.setValue(1)
         self._spinbox.valueChanged.connect(self._on_value_changed)
         layout.addWidget(self._spinbox)

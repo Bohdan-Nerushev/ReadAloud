@@ -10,6 +10,7 @@ from src.gui.widgets.project_input import ProjectInputWidget
 from src.gui.widgets.file_selector import FileSelectorWidget
 from src.gui.widgets.language_selector import LanguageSelectorWidget
 from src.gui.widgets.thread_selector import ThreadSelectorWidget
+from src.gui.widgets.gender_selector import GenderSelectorWidget
 from src.gui.widgets.progress_display import ProgressDisplayWidget
 from src.gui.widgets.control_buttons import ControlButtonsWidget
 from src.gui.styles import Styles
@@ -85,6 +86,9 @@ class MainWindow(QMainWindow):
         
         self.language_selector = LanguageSelectorWidget()
         card_layout.addWidget(self.language_selector)
+        
+        self.gender_selector = GenderSelectorWidget()
+        card_layout.addWidget(self.gender_selector)
         
         self.thread_selector = ThreadSelectorWidget()
         card_layout.addWidget(self.thread_selector)

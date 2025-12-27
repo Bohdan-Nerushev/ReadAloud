@@ -18,12 +18,24 @@ class AudioGenerator:
     into MP3 audio files. It offers better quality and higher rate limits than gTTS.
     """
     
-    # Mapping of language codes to Edge TTS voices
+    # Mapping of language codes and genders to Edge TTS voices
     VOICE_MAPPING = {
-        'en': 'en-US-AriaNeural',
-        'uk': 'uk-UA-OstapNeural',
-        'de': 'de-DE-KatjaNeural',
-        'ru': 'ru-RU-SvetlanaNeural'
+        'en': {
+            'male': 'en-US-GuyNeural',
+            'female': 'en-US-AriaNeural'
+        },
+        'uk': {
+            'male': 'uk-UA-OstapNeural',
+            'female': 'uk-UA-PolinaNeural'
+        },
+        'de': {
+            'male': 'de-DE-ConradNeural',
+            'female': 'de-DE-KatjaNeural'
+        },
+        'ru': {
+            'male': 'ru-RU-DmitryNeural',
+            'female': 'ru-RU-SvetlanaNeural'
+        }
     }
     
     def __init__(
@@ -36,6 +48,7 @@ class AudioGenerator:
             self,
             chunk: AudioChunk,
             language: str,
+            gender: str,
             output_dir: str
     ) -> str:
         """
@@ -46,6 +59,7 @@ class AudioGenerator:
         Args:
             chunk: The AudioChunk containing text to convert
             language: Language code for speech synthesis
+            gender: Gender of the voice ('male' or 'female')
             output_dir: Directory where the audio file will be saved
             
         Returns:
@@ -74,7 +88,7 @@ class AudioGenerator:
         audio_filename = f"{chunk.chunk_number}.mp3"
         audio_file_path = output_path / audio_filename
         
-        voice = self.VOICE_MAPPING.get(language, 'en-US-AriaNeural')
+        voice = self.VOICE_MAPPING.get(language, {}).get(gender, 'en-US-GuyNeural')
         
         async def _generate() -> None:
             communicate = edge_tts.Communicate(chunk.text_content, voice)

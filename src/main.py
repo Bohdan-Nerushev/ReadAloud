@@ -50,6 +50,7 @@ def main() -> None:
                 return
             
             language = window.language_selector.get_selected_language()
+            gender = window.gender_selector.get_selected_gender()
             thread_count = window.thread_selector.get_thread_count()
             output_dir = window.output_selector.get_selected_directory()
             
@@ -57,6 +58,7 @@ def main() -> None:
                 project_name=project_name,
                 input_file_path=input_file,
                 language=language,
+                gender=gender,
                 thread_count=thread_count,
                 output_dir_path=output_dir
             )
