@@ -24,3 +24,6 @@ final/
 # System files
 .DS_Store
 *.log
+
+/final/
+file.txt

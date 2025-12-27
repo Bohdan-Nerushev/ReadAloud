@@ -4,18 +4,27 @@ Audio generation service using Google Text-to-Speech (gTTS).
 This module handles conversion of text chunks to audio files.
 """
 
+import asyncio
 from pathlib import Path
-from gtts import gTTS
+import edge_tts
 from src.domain.models import AudioChunk
 
 
 class AudioGenerator:
     """
-    Service responsible for generating audio files from text using gTTS.
+    Service responsible for generating audio files from text using Edge TTS.
     
-    This service integrates with Google's Text-to-Speech API to convert text chunks
-    into MP3 audio files.
+    This service integrates with Microsoft Edge's Text-to-Speech API to convert text chunks
+    into MP3 audio files. It offers better quality and higher rate limits than gTTS.
     """
+    
+    # Mapping of language codes to Edge TTS voices
+    VOICE_MAPPING = {
+        'en': 'en-US-AriaNeural',
+        'uk': 'uk-UA-OstapNeural',
+        'de': 'de-DE-KatjaNeural',
+        'ru': 'ru-RU-SvetlanaNeural'
+    }
     
     def __init__(
             self
@@ -30,13 +39,13 @@ class AudioGenerator:
             output_dir: str
     ) -> str:
         """
-        Generates an audio file from a text chunk using gTTS.
+        Generates an audio file from a text chunk using Edge TTS.
         
         The audio file is saved as {chunk_number}.mp3 in the specified output directory.
         
         Args:
             chunk: The AudioChunk containing text to convert
-            language: Language code for speech synthesis (e.g., 'en', 'uk', 'de', 'ru')
+            language: Language code for speech synthesis
             output_dir: Directory where the audio file will be saved
             
         Returns:
@@ -44,7 +53,7 @@ class AudioGenerator:
             
         Raises:
             ValueError: If chunk is None or output_dir doesn't exist
-            Exception: If gTTS fails to generate audio
+            Exception: If generation fails
         """
         if chunk is None:
             raise ValueError(
@@ -65,16 +74,15 @@ class AudioGenerator:
         audio_filename = f"{chunk.chunk_number}.mp3"
         audio_file_path = output_path / audio_filename
         
-        try:
-            tts = gTTS(
-                text=chunk.text_content,
-                lang=language,
-                slow=False
-            )
+        voice = self.VOICE_MAPPING.get(language, 'en-US-AriaNeural')
+        
+        async def _generate() -> None:
+            communicate = edge_tts.Communicate(chunk.text_content, voice)
+            await communicate.save(str(audio_file_path))
             
-            tts.save(
-                str(audio_file_path)
-            )
+        try:
+            # Run the async generation in a new event loop
+            asyncio.run(_generate())
             
         except Exception as e:
             raise Exception(

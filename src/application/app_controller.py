@@ -5,6 +5,7 @@ This module orchestrates the entire application, coordinating between GUI, domai
 """
 
 from pathlib import Path
+import threading
 from typing import Optional, List
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from src.domain.models import ProjectConfig, AudioChunk
@@ -290,21 +291,32 @@ class ApplicationController(QObject):
         Args:
             config: Project configuration
         """
+        # Create 'final' subdirectory in the selected output folder
         try:
-            # Create 'final' subdirectory in the selected output folder
             base_output_dir = Path(config.output_dir_path)
             final_dir = base_output_dir / "final"
             self._file_manager.ensure_directory_exists(
                 str(final_dir)
             )
-            
             output_path = final_dir / f"{config.project_name}.mp3"
-            
-            valid_audio_files = [
-                f for f in self._audio_files if f is not None
-            ]
-            
-            if valid_audio_files:
+        except Exception as e:
+            self.errorOccurred.emit(
+                f"Failed to prepare output directory: {str(e)}"
+            )
+            return
+
+        valid_audio_files = [
+            f for f in self._audio_files if f is not None
+        ]
+
+        if not valid_audio_files:
+            self.errorOccurred.emit(
+                "No audio files were generated successfully"
+            )
+            return
+
+        def _assembly_task() -> None:
+            try:
                 self._audio_assembler.assemble_audio(
                     valid_audio_files,
                     str(output_path)
@@ -329,15 +341,15 @@ class ApplicationController(QObject):
                     self.errorOccurred.emit(
                         f"Warning: {failed_count} chunks failed to generate and were skipped."
                     )
-            else:
+                    
+            except Exception as e:
                 self.errorOccurred.emit(
-                    "No audio files were generated successfully"
+                    f"Failed to finalize generation: {str(e)}"
                 )
-                
-        except Exception as e:
-            self.errorOccurred.emit(
-                f"Failed to finalize generation: {str(e)}"
-            )
+
+        # Run assembly in a separate thread to prevent GUI freezing
+        thread = threading.Thread(target=_assembly_task, daemon=True)
+        thread.start()
     
     def is_paused(
             self
