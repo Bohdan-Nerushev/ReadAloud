@@ -11,7 +11,7 @@ class TextProcessor:
     """
     Service responsible for preprocessing text to remove or replace potentially problematic characters.
     
-    This ensures that the text is safe for processing by gTTS and prevents issues with special characters
+    This ensures that the text is safe for processing by the TTS engine and prevents issues with special characters
     that might cause errors in text-to-speech conversion.
     """
     

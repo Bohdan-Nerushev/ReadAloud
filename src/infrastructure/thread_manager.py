@@ -34,14 +34,14 @@ class ThreadManager:
         Initialize the ThreadManager.
         
         Args:
-            thread_count: Number of worker threads (1-5)
+            thread_count: Number of worker threads (1-30)
             
         Raises:
-            ValueError: If thread_count is not between 1 and 5
+            ValueError: If thread_count is not between 1 and 30
         """
-        if not 1 <= thread_count <= 15:
+        if not 1 <= thread_count <= 30:
             raise ValueError(
-                f"Thread count must be between 1 and 15, got: {thread_count}"
+                f"Thread count must be between 1 and 30, got: {thread_count}"
             )
         
         self._thread_count: int = thread_count

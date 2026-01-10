@@ -18,7 +18,7 @@ class ProjectConfig:
         project_name: Name of the output MP3 file (without extension)
         input_file_path: Path to the input text file
         language: Language code for speech synthesis (en, uk, de, ru)
-        thread_count: Number of concurrent threads for audio generation (1-5)
+        thread_count: Number of concurrent threads for audio generation (1-30)
     """
     project_name: str
     input_file_path: str
@@ -26,6 +26,7 @@ class ProjectConfig:
     gender: str
     thread_count: int
     output_dir_path: str
+    speed: float = 1.0
 
     def __post_init__(
             self
@@ -39,6 +40,12 @@ class ProjectConfig:
         if not self.project_name or not self.project_name.strip():
             raise ValueError(
                 "Project name cannot be empty"
+            )
+            
+        import re
+        if not re.match(r'^[\w\-. ]+$', self.project_name):
+            raise ValueError(
+                "Project name contains invalid characters. Use letters, numbers, spaces, dashes and underscores only."
             )
         
         if not self.input_file_path:
@@ -71,9 +78,14 @@ class ProjectConfig:
                 f"Gender must be one of {allowed_genders}, got: {self.gender}"
             )
         
-        if not 1 <= self.thread_count <= 15:
+        if not 1 <= self.thread_count <= 30:
             raise ValueError(
-                f"Thread count must be between 1 and 15, got: {self.thread_count}"
+                f"Thread count must be between 1 and 30, got: {self.thread_count}"
+            )
+        
+        if not 0.5 <= self.speed <= 2.0:
+            raise ValueError(
+                f"Speed must be between 0.5 and 2.0, got: {self.speed}"
             )
             
         if not self.output_dir_path:

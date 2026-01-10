@@ -1,10 +1,11 @@
 """
-Audio generation service using Google Text-to-Speech (gTTS).
+Audio generation service using Edge TTS.
 
 This module handles conversion of text chunks to audio files.
 """
 
 import asyncio
+import logging
 from pathlib import Path
 import edge_tts
 from src.domain.models import AudioChunk
@@ -66,41 +67,49 @@ class AudioGenerator:
             Absolute path to the generated audio file
             
         Raises:
-            ValueError: If chunk is None or output_dir doesn't exist
+            ValueError: If chunk/parameters are invalid or voice is not found
             Exception: If generation fails
         """
         if chunk is None:
-            raise ValueError(
-                "Chunk cannot be None"
-            )
+            raise ValueError("Chunk cannot be None")
+        
+        # Voice Validation
+        if language not in self.VOICE_MAPPING:
+            raise ValueError(f"Unsupported language code: {language}")
+            
+        voice_map = self.VOICE_MAPPING[language]
+        if gender not in voice_map:
+            raise ValueError(f"Unsupported gender '{gender}' for language '{language}'")
+            
+        voice = voice_map[gender]
         
         output_path = Path(output_dir)
         if not output_path.exists():
-            raise ValueError(
-                f"Output directory does not exist: {output_dir}"
-            )
+            raise ValueError(f"Output directory does not exist: {output_dir}")
         
         if not output_path.is_dir():
-            raise ValueError(
-                f"Output path is not a directory: {output_dir}"
-            )
+            raise ValueError(f"Output path is not a directory: {output_dir}")
         
         audio_filename = f"{chunk.chunk_number}.mp3"
         audio_file_path = output_path / audio_filename
         
-        voice = self.VOICE_MAPPING.get(language, {}).get(gender, 'en-US-GuyNeural')
-        
         async def _generate() -> None:
-            communicate = edge_tts.Communicate(chunk.text_content, voice)
-            await communicate.save(str(audio_file_path))
+            try:
+                communicate = edge_tts.Communicate(chunk.text_content, voice)
+                await communicate.save(str(audio_file_path))
+            except Exception as async_err:
+                 # Re-raise to be caught by main try block
+                 raise async_err
             
         try:
             # Run the async generation in a new event loop
+            # Note: For strict independent execution per thread, asyncio.run is safe.
+            # Optimization for one-loop-per-group is lower priority and riskier 
+            # without refactoring ThreadManager.
             asyncio.run(_generate())
             
         except Exception as e:
-            raise Exception(
-                f"Failed to generate audio for chunk {chunk.chunk_number}: {str(e)}"
-            ) from e
+            logging.error(f"Failed to generate audio for chunk {chunk.chunk_number}: {e}")
+            raise Exception(f"Failed to generate audio for chunk {chunk.chunk_number}: {str(e)}") from e
         
         return str(audio_file_path.absolute())

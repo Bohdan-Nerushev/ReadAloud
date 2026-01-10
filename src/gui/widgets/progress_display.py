@@ -89,3 +89,23 @@ class ProgressDisplayWidget(QWidget):
         """Sets the progress display to show completion."""
         self._progress_bar.setValue(100)
         self._status_label.setText("Generation complete!")
+
+    def update_assembly_progress(
+            self,
+            percentage: float,
+            remaining_seconds: float
+    ) -> None:
+        """
+        Updates the progress display for assembly phase.
+        
+        Args:
+            percentage: Completion percentage (0-100)
+            remaining_seconds: Estimated seconds remaining
+        """
+        self._progress_bar.setValue(int(percentage))
+        
+        minutes = int(remaining_seconds // 60)
+        seconds = int(remaining_seconds % 60)
+        eta_str = f"{minutes:02d}:{seconds:02d}"
+        
+        self._status_label.setText(f"Assembling audio... {percentage:.1f}% | ETA: {eta_str}")

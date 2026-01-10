@@ -113,13 +113,14 @@ class ProgressTracker:
             Estimated completion datetime, or None if estimation is not possible
         """
         with self._lock:
-            if self._start_time is None or self._completed_chunks == 0:
+            processed_count = self._completed_chunks + self._failed_chunks
+            if self._start_time is None or processed_count == 0:
                 return None
             
             elapsed_time = datetime.now() - self._start_time
-            average_time_per_chunk = elapsed_time / self._completed_chunks
+            average_time_per_chunk = elapsed_time / processed_count
             
-            remaining_chunks = self._total_chunks - self._completed_chunks
+            remaining_chunks = self._total_chunks - processed_count
             estimated_remaining_time = average_time_per_chunk * remaining_chunks
             
             return datetime.now() + estimated_remaining_time

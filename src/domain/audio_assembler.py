@@ -25,21 +25,18 @@ class AudioAssembler:
     def assemble_audio(
             self,
             audio_files: List[str],
-            output_path: str
+            output_path: str,
+            speed: float = 1.0,
+            callback: callable = None
     ) -> None:
         """
         Concatenates multiple audio files into a single MP3 file using ffmpeg.
         
-        Audio files are concatenated in the order they appear in the list.
-        The output file is saved to the specified path.
-        
         Args:
             audio_files: List of paths to audio files to concatenate
             output_path: Path where the final audio file will be saved
-            
-        Raises:
-            ValueError: If audio_files is empty or any file doesn't exist
-            Exception: If ffmpeg fails to process the audio
+            speed: Playback speed multiplier (default 1.0)
+            callback: Progress callback function
         """
         if not audio_files:
             raise ValueError(
@@ -64,43 +61,84 @@ class AudioAssembler:
         list_path = output_dir / "concat_list.txt"
         
         try:
-            # 1. Create file list
-            # ffmpeg concat demuxer format: file '/path/to/file'
+            # 1. Calculate total duration
+            total_duration = 0.0
+            for path in audio_files:
+                try:
+                    total_duration += self._get_file_duration(path)
+                except Exception:
+                    pass  # skip duration check if fails
+
+            # 2. Create file list
             with open(list_path, 'w', encoding='utf-8') as f:
                 for path in audio_files:
-                    # Resolve to absolute path and use forward slashes
                     safe_path = Path(path).resolve().as_posix()
-                    # Escape single quotes in path if present
                     safe_path = safe_path.replace("'", "'\\''")
                     f.write(f"file '{safe_path}'\n")
             
-            # 2. Construct ffmpeg command
-            # -f concat: use concat demuxer
-            # -safe 0: allow unsafe paths (files not in current dir)
-            # -i list_path: input file list
-            # -filter:a "atempo=1.25": increase speed by 1.25x
-            # -vn: disable video (audio only)
-            # -y: overwrite output
-            # -b:a 192k: set audio bitrate (optional, good for quality)
+            # 3. Construct ffmpeg command
             cmd = [
                 'ffmpeg',
                 '-f', 'concat',
                 '-safe', '0',
-                '-i', str(list_path),
-                '-filter:a', 'atempo=1.25',
+                '-i', str(list_path)
+            ]
+            
+            # Apply speed filter if not 1.0
+            if abs(speed - 1.0) > 0.01:
+                cmd.extend(['-filter:a', f'atempo={speed}'])
+                
+            cmd.extend([
                 '-vn',
                 '-y',
                 str(output_file_path)
-            ]
+            ])
             
-            # Run ffmpeg
-            result = subprocess.run(
+            # Run ffmpeg with Popen to capture output
+            process = subprocess.Popen(
                 cmd,
-                check=True,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                text=True
+                universal_newlines=True
             )
+
+            import re
+            import time
+
+            start_time = time.time()
+            time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)")
+
+            # Read stderr line by line
+            while True:
+                line = process.stderr.readline()
+                if not line:
+                    if process.poll() is not None:
+                        break
+                    continue
+                
+                if callback and total_duration > 0:
+                    match = time_pattern.search(line)
+                    if match:
+                        hours, minutes, seconds = map(float, match.groups())
+                        current_seconds = hours * 3600 + minutes * 60 + seconds
+                        
+                        # Adjust for atempo=1.25 (ffmpeg reports input time, but we care about total input processed)
+                        # Actually ffmpeg time usually reports output timestamp. 
+                        # Since we speed up by 1.25, the output duration will be Total / 1.25.
+                        # And 'time' in stats is output time.
+                        # So progress is current_output_time / (total_duration / 1.25)
+                        
+                        expected_output_duration = total_duration / speed
+                        percentage = min(100, (current_seconds / expected_output_duration) * 100) if expected_output_duration > 0 else 0
+                        
+                        elapsed = time.time() - start_time
+                        if percentage > 0:
+                            total_estimated = elapsed * (100 / percentage)
+                            remaining = total_estimated - elapsed
+                            callback(percentage, remaining)
+
+            if process.returncode != 0:
+                raise Exception(f"ffmpeg exited with code {process.returncode}")
             
         except subprocess.CalledProcessError as e:
             raise Exception(
@@ -117,3 +155,16 @@ class AudioAssembler:
                     list_path.unlink()
                 except Exception:
                     pass
+
+    def _get_file_duration(self, file_path: str) -> float:
+        """Get duration of an audio file in seconds using ffprobe."""
+        cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            str(file_path)
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return float(result.stdout.strip())
+

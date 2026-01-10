@@ -4,159 +4,198 @@ GUI styling constants.
 This module provides consistent styling for the application's graphical interface.
 """
 
+from typing import Dict
+
+class Palette:
+    """Color palette for the application."""
+    
+    # Base Colors
+    PRIMARY = "#4CAF50"      # Green
+    PRIMARY_HOVER = "#45a049"
+    PRIMARY_PRESSED = "#3d8b40"
+    
+    SECONDARY = "#2196F3"    # Blue
+    SECONDARY_HOVER = "#0b7dda"
+    
+    WARNING = "#FF9800"      # Orange
+    WARNING_HOVER = "#e68900"
+    WARNING_PRESSED = "#cc7a00"
+    
+    ERROR = "#f44336"        # Red
+    ERROR_HOVER = "#da190b"
+    ERROR_PRESSED = "#c41606"
+    
+    DISABLED_BG = "#cccccc"
+    DISABLED_TEXT = "#666666"
+    
+    # Backgrounds
+    BG_MAIN = "#f5f5f5"
+    BG_CARD = "#ffffff"
+    BG_INPUT = "#ffffff"
+    
+    # Text
+    TEXT_PRIMARY = "#333333"
+    TEXT_SECONDARY = "#555555"
+    TEXT_INVERSE = "#ffffff"
+    
+    # Borders
+    BORDER_DEFAULT = "#cccccc"
+    BORDER_LIGHT = "#e0e0e0"
+    BORDER_FOCUS = "#6faaed"
+
 
 class Styles:
     """Constants for GUI styling."""
     
-    BUTTON_START = """
-        QPushButton {
-            background-color: #4CAF50;
-            color: white;
+    BUTTON_START = f"""
+        QPushButton {{
+            background-color: {Palette.PRIMARY};
+            color: {Palette.TEXT_INVERSE};
             border: none;
             padding: 10px 20px;
             font-size: 14px;
             font-weight: bold;
             border-radius: 5px;
-        }
-        QPushButton:hover {
-            background-color: #45a049;
-        }
-        QPushButton:pressed {
-            background-color: #3d8b40;
-        }
-        QPushButton:disabled {
-            background-color: #cccccc;
-            color: #666666;
-        }
+        }}
+        QPushButton:hover {{
+            background-color: {Palette.PRIMARY_HOVER};
+        }}
+        QPushButton:pressed {{
+            background-color: {Palette.PRIMARY_PRESSED};
+        }}
+        QPushButton:disabled {{
+            background-color: {Palette.DISABLED_BG};
+            color: {Palette.DISABLED_TEXT};
+        }}
     """
     
-    BUTTON_PAUSE = """
-        QPushButton {
-            background-color: #FF9800;
-            color: white;
+    BUTTON_PAUSE = f"""
+        QPushButton {{
+            background-color: {Palette.WARNING};
+            color: {Palette.TEXT_INVERSE};
             border: none;
             padding: 10px 20px;
             font-size: 14px;
             font-weight: bold;
             border-radius: 5px;
-        }
-        QPushButton:hover {
-            background-color: #e68900;
-        }
-        QPushButton:pressed {
-            background-color: #cc7a00;
-        }
+        }}
+        QPushButton:hover {{
+            background-color: {Palette.WARNING_HOVER};
+        }}
+        QPushButton:pressed {{
+            background-color: {Palette.WARNING_PRESSED};
+        }}
     """
     
-    BUTTON_STOP = """
-        QPushButton {
-            background-color: #f44336;
-            color: white;
+    BUTTON_STOP = f"""
+        QPushButton {{
+            background-color: {Palette.ERROR};
+            color: {Palette.TEXT_INVERSE};
             border: none;
             padding: 10px 20px;
             font-size: 14px;
             font-weight: bold;
             border-radius: 5px;
-        }
-        QPushButton:hover {
-            background-color: #da190b;
-        }
-        QPushButton:pressed {
-            background-color: #c41606;
-        }
+        }}
+        QPushButton:hover {{
+            background-color: {Palette.ERROR_HOVER};
+        }}
+        QPushButton:pressed {{
+            background-color: {Palette.ERROR_PRESSED};
+        }}
     """
     
-    BUTTON_FILE_SELECT = """
-        QPushButton {
-            background-color: #2196F3;
-            color: white;
+    BUTTON_FILE_SELECT = f"""
+        QPushButton {{
+            background-color: {Palette.SECONDARY};
+            color: {Palette.TEXT_INVERSE};
             border: none;
             padding: 8px 16px;
             font-size: 12px;
             border-radius: 4px;
-        }
-        QPushButton:hover {
-            background-color: #0b7dda;
-        }
+        }}
+        QPushButton:hover {{
+            background-color: {Palette.SECONDARY_HOVER};
+        }}
     """
     
-    MAIN_WINDOW_STYLE = "background-color: #f5f5f5;"
+    MAIN_WINDOW_STYLE = f"background-color: {Palette.BG_MAIN};"
     
-    INPUT_STYLE = """
-        QLineEdit, QComboBox, QSpinBox {
-            background-color: white;
-            color: #333333;
-            border: 1px solid #cccccc;
+    INPUT_STYLE = f"""
+        QLineEdit, QComboBox, QSpinBox {{
+            background-color: {Palette.BG_INPUT};
+            color: {Palette.TEXT_PRIMARY};
+            border: 1px solid {Palette.BORDER_DEFAULT};
             border-radius: 4px;
             padding: 5px;
             min-height: 30px;
             max-height: 30px;
             font-size: 13px;
-        }
-        QComboBox::drop-down {
+        }}
+        QComboBox::drop-down {{
             border: none;
             width: 20px;
-        }
-        QComboBox::down-arrow {
+        }}
+        QComboBox::down-arrow {{
             image: none;
-            border-left: 2px solid #555555;
-            border-bottom: 2px solid #555555;
+            border-left: 2px solid {Palette.TEXT_SECONDARY};
+            border-bottom: 2px solid {Palette.TEXT_SECONDARY};
             width: 8px;
             height: 8px;
             transform: rotate(-45deg);
             margin-right: 5px;
-        }
-        QComboBox QAbstractItemView {
-            background-color: white;
-            color: #333333;
-            selection-background-color: #6faaed;
-            selection-color: white;
-            border: 1px solid #cccccc;
-        }
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {Palette.BG_INPUT};
+            color: {Palette.TEXT_PRIMARY};
+            selection-background-color: {Palette.BORDER_FOCUS};
+            selection-color: {Palette.TEXT_INVERSE};
+            border: 1px solid {Palette.BORDER_DEFAULT};
+        }}
     """
     
-    LABEL_TITLE = "font-size: 22px; font-weight: bold; color: #333333; margin-bottom: 10px;"
-    LABEL_FIELD = "font-size: 13px; color: #555555; font-weight: bold;"
-    LABEL_STATUS = "font-size: 15px; color: #333333; padding: 10px; font-weight: bold; min-height: 40px;"
+    LABEL_TITLE = f"font-size: 22px; font-weight: bold; color: {Palette.TEXT_PRIMARY}; margin-bottom: 10px;"
+    LABEL_FIELD = f"font-size: 13px; color: {Palette.TEXT_SECONDARY}; font-weight: bold;"
+    LABEL_STATUS = f"font-size: 15px; color: {Palette.TEXT_PRIMARY}; padding: 10px; font-weight: bold; min-height: 40px;"
     
-    CARD_STYLE = """
-        QWidget#ConfigCard {
-            background-color: #ffffff;
+    CARD_STYLE = f"""
+        QWidget#ConfigCard {{
+            background-color: {Palette.BG_CARD};
             border-radius: 10px;
-            border: 1px solid #e0e0e0;
-        }
+            border: 1px solid {Palette.BORDER_LIGHT};
+        }}
     """
     
-    LABEL_FILE_DISPLAY = """
-        color: #333333; 
-        background-color: white; 
-        border: 1px solid #cccccc; 
+    LABEL_FILE_DISPLAY = f"""
+        color: {Palette.TEXT_PRIMARY}; 
+        background-color: {Palette.BG_INPUT}; 
+        border: 1px solid {Palette.BORDER_DEFAULT}; 
         border-radius: 4px; 
         padding: 5px;
         min-height: 20px;
         max-height: 20px;
     """
     
-    PROGRESS_BAR_STYLE = """
-        QProgressBar {
-            background-color: white;
-            border: 1px solid #ffffff;
+    PROGRESS_BAR_STYLE = f"""
+        QProgressBar {{
+            background-color: {Palette.BG_INPUT};
+            border: 1px solid {Palette.TEXT_INVERSE};
             border-radius: 5px;
             text-align: center;
-            color: #333333;
+            color: {Palette.TEXT_PRIMARY};
             font-weight: bold;
             min-height: 35px;
             max-height: 35px;
             font-size: 14px;
-        }
-        QProgressBar::chunk {
-            background-color: #4CAF50;
+        }}
+        QProgressBar::chunk {{
+            background-color: {Palette.PRIMARY};
             border-radius: 4px;
-        }
+        }}
     """
     
     WINDOW_MIN_WIDTH = 900
-    WINDOW_MIN_HEIGHT = 900
+    WINDOW_MIN_HEIGHT = 650
     
     PROGRESS_WIDGET_MIN_HEIGHT = 120
     
