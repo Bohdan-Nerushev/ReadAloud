@@ -67,7 +67,10 @@ def test_domain_models():
             project_name="",
             input_file_path="/tmp/test.txt",
             language="en",
-            thread_count=1
+            gender="male",
+            speed=1.0,
+            thread_count=1,
+            output_dir_path="/tmp"
         )
         print("✗ Should have raised ValueError for empty project name")
     except ValueError as e:

@@ -27,7 +27,8 @@ class AudioAssembler:
             audio_files: List[str],
             output_path: str,
             speed: float = 1.0,
-            callback: callable = None
+            callback: callable = None,
+            copy_codec: bool = False
     ) -> None:
         """
         Concatenates multiple audio files into a single MP3 file using ffmpeg.
@@ -37,6 +38,7 @@ class AudioAssembler:
             output_path: Path where the final audio file will be saved
             speed: Playback speed multiplier (default 1.0)
             callback: Progress callback function
+            copy_codec: If True, uses -c copy for fast concatenation (ignores speed)
         """
         if not audio_files:
             raise ValueError(
@@ -84,9 +86,13 @@ class AudioAssembler:
                 '-i', str(list_path)
             ]
             
-            # Apply speed filter if not 1.0
-            if abs(speed - 1.0) > 0.01:
-                cmd.extend(['-filter:a', f'atempo={speed}'])
+            # Apply codec/filter options
+            if copy_codec:
+                cmd.extend(['-c', 'copy'])
+            else:
+                # Apply speed filter if not 1.0
+                if abs(speed - 1.0) > 0.01:
+                    cmd.extend(['-filter:a', f'atempo={speed}'])
                 
             cmd.extend([
                 '-vn',

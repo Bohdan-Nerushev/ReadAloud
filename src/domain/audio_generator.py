@@ -6,6 +6,7 @@ This module handles conversion of text chunks to audio files.
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 import edge_tts
 from src.domain.models import AudioChunk
@@ -43,8 +44,24 @@ class AudioGenerator:
             self
     ) -> None:
         """Initialize the AudioGenerator."""
-        pass
+        # Thread-local storage for event loops
+        self._thread_local = threading.local()
     
+    def _get_or_create_loop(self) -> asyncio.AbstractEventLoop:
+        """
+        Gets or creates an event loop for the current thread.
+        
+        Returns:
+            The event loop for the current thread.
+        """
+        if not hasattr(self._thread_local, 'loop'):
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._thread_local.loop = loop
+        
+        return self._thread_local.loop
+
     def generate_audio(
             self,
             chunk: AudioChunk,
@@ -102,11 +119,9 @@ class AudioGenerator:
                  raise async_err
             
         try:
-            # Run the async generation in a new event loop
-            # Note: For strict independent execution per thread, asyncio.run is safe.
-            # Optimization for one-loop-per-group is lower priority and riskier 
-            # without refactoring ThreadManager.
-            asyncio.run(_generate())
+            # Reuse thread-local event loop
+            loop = self._get_or_create_loop()
+            loop.run_until_complete(_generate())
             
         except Exception as e:
             logging.error(f"Failed to generate audio for chunk {chunk.chunk_number}: {e}")

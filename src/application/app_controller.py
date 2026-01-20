@@ -8,7 +8,8 @@ import logging
 import threading
 import re
 from pathlib import Path
-from typing import Optional, List, Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, List, Any, Dict, Set
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
 from src.domain.models import ProjectConfig, AudioChunk
 from src.domain.text_processor import TextProcessor
@@ -118,6 +119,15 @@ class ApplicationController(QObject):
         self._progress_timer = QTimer()
         self._progress_timer.timeout.connect(self._update_progress_display)
         self._completion_timer: Optional[QTimer] = None
+        
+        # Batch assembly
+        self.BATCH_SIZE = 50
+        self._batch_submitted: Set[int] = set()
+        self._batch_results: Dict[int, str] = {}
+        self._assembly_executor: Optional[ThreadPoolExecutor] = None
+        
+        self._last_signal_time = 0
+        self._signal_throttle_ms = 100
     
     def start_generation(
             self,
@@ -141,6 +151,12 @@ class ApplicationController(QObject):
             self._audio_files = []
             self._text_dir = None
             self._audio_dir = None
+            
+            # Reset batch assembly
+            self._batch_submitted = set()
+            self._batch_results = {}
+            # Max 2 concurrent assembly tasks (ffmpeg is heavy)
+            self._assembly_executor = ThreadPoolExecutor(max_workers=2)
             
             # Show "Preparing..." state
             # We use 0, 0, "Preparing..." to indicate indefinite progress
@@ -291,7 +307,15 @@ class ApplicationController(QObject):
             self
     ) -> None:
         """Updates the progress display via signal."""
+        import time
+        current_time = time.time() * 1000
+        
+        # Throttle signals
+        if (current_time - self._last_signal_time) < self._signal_throttle_ms:
+            return
+
         if self._progress_tracker:
+            self._last_signal_time = current_time
             completed = self._progress_tracker.get_completed_count()
             total = self._progress_tracker.get_total_count()
             eta = self._progress_tracker.get_eta_string()
@@ -318,6 +342,8 @@ class ApplicationController(QObject):
                         self._completion_timer.stop()
                     self._progress_timer.stop()
                     self._finalize_generation()
+                else:
+                    self._check_batch_assembly()
         
         completion_timer = QTimer()
         completion_timer.timeout.connect(check_completion)
@@ -380,13 +406,45 @@ class ApplicationController(QObject):
 
         def _assembly_task() -> None:
             try:
-                logging.info(f"Assembling {len(valid_audio_files)} files into {output_path}")
-                self._audio_assembler.assemble_audio(
-                    valid_audio_files,
-                    str(output_path),
-                    speed=self.config.speed,
-                    callback=_assembly_progress_callback
-                )
+                # 1. Ensure all batches are submitted
+                self._check_batch_assembly()
+                
+                # 2. Wait for all batch assemblies to complete
+                logging.info("Waiting for background assembly tasks...")
+                if self._assembly_executor:
+                    self._assembly_executor.shutdown(wait=True)
+                
+                # 3. Check results
+                total_batches = (len(self._chunks) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+                ordered_parts = []
+                use_batch_result = True
+                
+                for i in range(total_batches):
+                    if i in self._batch_results:
+                        ordered_parts.append(self._batch_results[i])
+                    else:
+                        logging.warning(f"Batch {i} result missing. Falling back to full assembly.")
+                        use_batch_result = False
+                        break
+                
+                if use_batch_result and ordered_parts:
+                    logging.info(f"Assembling {len(ordered_parts)} pre-processed parts (Fast mode)")
+                    self._audio_assembler.assemble_audio(
+                        ordered_parts,
+                        str(output_path),
+                        speed=1.0,  # Speed already applied in batches
+                        callback=_assembly_progress_callback,
+                        copy_codec=True # Fast merge
+                    )
+                else:
+                    logging.info(f"Assembling {len(valid_audio_files)} raw chunks (Fallback mode)")
+                    self._audio_assembler.assemble_audio(
+                        valid_audio_files,
+                        str(output_path),
+                        speed=self.config.speed,
+                        callback=_assembly_progress_callback,
+                        copy_codec=False # Full process
+                    )
                 
                 temp_dirs = []
                 if self._text_dir:
@@ -418,6 +476,65 @@ class ApplicationController(QObject):
         thread = threading.Thread(target=_assembly_task, daemon=True)
         thread.start()
     
+    def _check_batch_assembly(self) -> None:
+        """Checks if enough chunks are ready for a batch merge."""
+        if not self._chunks:
+            return
+
+        total_batches = (len(self._chunks) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        
+        for i in range(total_batches):
+            if i in self._batch_submitted:
+                continue
+            
+            start_idx = i * self.BATCH_SIZE
+            end_idx = min(start_idx + self.BATCH_SIZE, len(self._chunks))
+            
+            # Check if all files in this range are generated
+            if all(self._audio_files[k] is not None for k in range(start_idx, end_idx)):
+                self._trigger_batch_assembly(i, start_idx, end_idx)
+
+    def _trigger_batch_assembly(
+            self, 
+            batch_index: int, 
+            start_idx: int, 
+            end_idx: int
+    ) -> None:
+        """Triggers a background assembly task for a batch."""
+        self._batch_submitted.add(batch_index)
+        
+        chunk_files = self._audio_files[start_idx:end_idx]
+        output_dir = Path(self._audio_dir)
+        part_path = output_dir / f"part_{batch_index}.mp3"
+        
+        def _assemble_task():
+            try:
+                # Apply speed here (re-encode)
+                self._audio_assembler.assemble_audio(
+                    chunk_files,
+                    str(part_path),
+                    speed=self.config.speed,
+                    copy_codec=False
+                )
+                return str(part_path)
+            except Exception as e:
+                logging.error(f"Batch {batch_index} assembly failed: {e}")
+                raise
+
+        future = self._assembly_executor.submit(_assemble_task)
+        
+        def _done_callback(fut):
+            try:
+                result_path = fut.result()
+                self._batch_results[batch_index] = result_path
+            except Exception as e:
+                # If batch fails, we can't easily recover in this architecture 
+                # without complex retry logic. 
+                # For now, we log it. Final assembly will detect missing parts.
+                logging.error(f"Batch {batch_index} callback error: {e}")
+
+        future.add_done_callback(_done_callback)
+
     def is_paused(
             self
     ) -> bool:

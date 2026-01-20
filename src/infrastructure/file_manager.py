@@ -106,7 +106,8 @@ class FileManager:
         with open(
                 file_path,
                 'w',
-                encoding='utf-8'
+                encoding='utf-8',
+                buffering=1024*1024  # 1MB buffer
         ) as f:
             f.write(chunk.text_content)
         
