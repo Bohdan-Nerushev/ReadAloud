@@ -41,6 +41,12 @@ class OutputSelectorWidget(QWidget):
         """Sets up the user interface components."""
         layout = QVBoxLayout()
         layout.setSpacing(Styles.SPACING_SMALL)
+        layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0
+        )
         
         label = QLabel("Output Directory (Result folder):")
         label.setStyleSheet(Styles.LABEL_FIELD)

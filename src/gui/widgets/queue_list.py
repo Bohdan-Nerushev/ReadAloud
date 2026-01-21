@@ -6,7 +6,7 @@ This module defines the widget used to display the list of all tasks.
 
 from typing import Dict
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QLabel
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from src.domain.models import GenerationTask
 from src.gui.widgets.queue_item import QueueItemWidget
 from src.gui.styles import Styles, Palette
@@ -15,6 +15,9 @@ class QueueListWidget(QWidget):
     """
     Widget displaying the queue of tasks.
     """
+    
+    taskPauseRequested = pyqtSignal(str)  # task_id
+    taskCancelRequested = pyqtSignal(str)  # task_id
     
     def __init__(
             self,
@@ -37,6 +40,7 @@ class QueueListWidget(QWidget):
         
         # List
         self._list_widget = QListWidget()
+        self._list_widget.setFixedHeight(Styles.QUEUE_LIST_HEIGHT)
         self._list_widget.setStyleSheet(f"""
             QListWidget {{
                 background-color: {Palette.BG_MAIN};
@@ -52,26 +56,64 @@ class QueueListWidget(QWidget):
         self._list_widget.setSpacing(5)
         layout.addWidget(self._list_widget)
         
-    def add_task(self, task: GenerationTask) -> None:
+    def add_task(
+            self,
+            task: GenerationTask
+    ) -> None:
         """
         Adds a task to the list.
         """
         item = QListWidgetItem(self._list_widget)
         widget = QueueItemWidget(task)
         
+        # Connect signals from queue item
+        widget.pauseRequested.connect(self.taskPauseRequested.emit)
+        widget.cancelRequested.connect(self.taskCancelRequested.emit)
+        
         item.setSizeHint(widget.sizeHint())
         
         self._list_widget.addItem(item)
-        self._list_widget.setItemWidget(item, widget)
+        self._list_widget.setItemWidget(
+            item,
+            widget
+        )
         
         self._items[task.id] = widget
         
         # Scroll to bottom
         self._list_widget.scrollToBottom()
         
-    def update_task(self, task: GenerationTask) -> None:
+    def update_task(
+            self,
+            task: GenerationTask
+    ) -> None:
         """
         Updates an existing task in the list.
         """
         if task.id in self._items:
             self._items[task.id].update_task(task)
+    
+    def remove_task(
+            self,
+            task_id: str
+    ) -> None:
+        """
+        Removes a task from the list.
+        
+        Args:
+            task_id: ID of the task to remove
+        """
+        if task_id not in self._items:
+            return
+        
+        # Find and remove the item
+        for i in range(self._list_widget.count()):
+            item = self._list_widget.item(i)
+            widget = self._list_widget.itemWidget(item)
+            if isinstance(
+                widget,
+                QueueItemWidget
+            ) and str(widget.task_id) == task_id:
+                self._list_widget.takeItem(i)
+                del self._items[task_id]
+                break

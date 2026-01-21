@@ -59,7 +59,12 @@ class ReadAloudApplication:
 
         self._controller.taskAdded.connect(self._window.queue_list.add_task)
         self._controller.taskUpdated.connect(self._window.queue_list.update_task)
+        self._controller.taskUpdated.connect(self._on_task_updated)
         self._controller.queueStatusChanged.connect(self._on_queue_status_changed)
+        
+        # Connect queue list signals
+        self._window.queue_list.taskPauseRequested.connect(self._on_task_pause_requested)
+        self._window.queue_list.taskCancelRequested.connect(self._on_task_cancel_requested)
 
     def _on_start_clicked(
             self
@@ -153,6 +158,56 @@ class ReadAloudApplication:
             self._window.control_buttons.set_running_state()
         else:
             self._window.control_buttons.set_idle_state()
+    
+    def _on_task_pause_requested(
+            self,
+            task_id: str
+    ) -> None:
+        """
+        Handles pause request for a specific task.
+        
+        Args:
+            task_id: ID of the task to pause
+        """
+        self._controller.pause_generation()
+    
+    def _on_task_cancel_requested(
+            self,
+            task_id: str
+    ) -> None:
+        """
+        Handles cancel request for a specific task.
+        
+        Args:
+            task_id: ID of the task to cancel
+        """
+        reply = QMessageBox.question(
+            self._window,
+            "Confirm Cancel",
+            "Are you sure you want to cancel this task?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self._controller.cancel_task(task_id)
+    
+    def _on_task_updated(
+            self,
+            task
+    ) -> None:
+        """
+        Handles task updates and removes completed tasks.
+        
+        Args:
+            task: Updated task
+        """
+        from src.domain.models import TaskStatus
+        
+        # Auto-remove completed tasks after a delay
+        if task.status == TaskStatus.COMPLETED:
+            # Remove from UI after task is done
+            self._window.queue_list.remove_task(str(task.id))
 
 
 def main() -> None:

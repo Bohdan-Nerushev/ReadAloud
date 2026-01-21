@@ -350,6 +350,25 @@ class ApplicationController(QObject):
         self._terminate_prep_worker()
         self._cleanup_temp_files()
         self._finalize_task()
+    
+    def cancel_task(
+            self,
+            task_id: str
+    ) -> None:
+        """
+        Cancels a specific task by its ID.
+        
+        Args:
+            task_id: UUID of the task to cancel
+        """
+        current_task = self._get_current_task()
+        
+        if current_task and str(current_task.id) == task_id:
+            # Cancel currently running task
+            self.stop_generation()
+        else:
+            # Task is in queue, remove it
+            logging.info(f"Cancelling queued task: {task_id}")
 
     def _terminate_prep_worker(
             self
@@ -430,8 +449,10 @@ class ApplicationController(QObject):
             eta
         )
 
-        percentage = self._progress_tracker.get_progress_percentage()
-        self._queue_service.update_task_progress(percentage)
+        # Limit generation phase to 90% maximum
+        raw_percentage = self._progress_tracker.get_progress_percentage()
+        capped_percentage = min(raw_percentage, 90.0)
+        self._queue_service.update_task_progress(capped_percentage)
     
     def _monitor_completion(
             self
@@ -458,8 +479,11 @@ class ApplicationController(QObject):
         
         self._completion_timer = completion_timer
     
-    def _sanitize_filename(self, filename: str) -> str:
-        """
+    def _sanitize_filename(
+            self,
+            filename: str
+    ) -> str:
+        r"""
         Sanitizes the project name to be a valid filename.
         Removes/replaces special characters: \ / : * ? " < > |
         """
@@ -548,6 +572,13 @@ class ApplicationController(QObject):
             self._assemble_fast(parts, output_path)
         else:
             self._assemble_full(valid_files, output_path, task.config.speed)
+        
+        # Verify that the final file was created successfully
+        if not output_path.exists():
+            raise ReadAloudException("Final audio file was not created")
+        
+        if output_path.stat().st_size == 0:
+            raise ReadAloudException("Final audio file is empty")
 
     def _get_assembly_parts(
             self
@@ -600,12 +631,23 @@ class ApplicationController(QObject):
             remaining: float
     ) -> None:
         """Callback for assembly progress signals."""
+        # Convert assembly progress from 0-100% to 90-100% range
+        final_percentage = 90.0 + (percentage * 0.1)
+        self._update_assembly_task_progress(final_percentage)
         self.assemblyProgressUpdated.emit(percentage, remaining)
+    
+    def _update_assembly_task_progress(
+            self,
+            percentage: float
+    ) -> None:
+        """Updates task progress during assembly phase (90-100%)."""
+        self._queue_service.update_task_progress(percentage)
 
     def _mark_task_completed(
             self
     ) -> None:
         """Updates current task success state and cleans up."""
+        # Set to 100% only after final assembly is complete
         self._queue_service.update_task_progress(100.0)
         self._queue_service.update_task_status(
             TaskStatus.COMPLETED,

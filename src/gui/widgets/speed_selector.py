@@ -39,6 +39,12 @@ class SpeedSelectorWidget(QWidget):
         """Sets up the user interface components."""
         layout = QVBoxLayout()
         layout.setSpacing(Styles.SPACING_SMALL)
+        layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0
+        )
         
         label = QLabel("Playback Speed:")
         label.setStyleSheet(Styles.LABEL_FIELD)

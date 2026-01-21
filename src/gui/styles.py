@@ -128,8 +128,7 @@ class Styles:
             border: 1px solid {Palette.BORDER_DEFAULT};
             border-radius: 4px;
             padding: 5px;
-            min-height: 30px;
-            max-height: 30px;
+            height: 30px;
             font-size: 13px;
         }}
         QComboBox::drop-down {{
@@ -142,7 +141,6 @@ class Styles:
             border-bottom: 2px solid {Palette.TEXT_SECONDARY};
             width: 8px;
             height: 8px;
-            transform: rotate(-45deg);
             margin-right: 5px;
         }}
         QComboBox QAbstractItemView {{
@@ -172,8 +170,7 @@ class Styles:
         border: 1px solid {Palette.BORDER_DEFAULT}; 
         border-radius: 4px; 
         padding: 5px;
-        min-height: 20px;
-        max-height: 20px;
+        height: 20px;
     """
     
     PROGRESS_BAR_STYLE = f"""
@@ -184,8 +181,7 @@ class Styles:
             text-align: center;
             color: {Palette.TEXT_PRIMARY};
             font-weight: bold;
-            min-height: 35px;
-            max-height: 35px;
+            height: 35px;
             font-size: 14px;
         }}
         QProgressBar::chunk {{
@@ -194,9 +190,18 @@ class Styles:
         }}
     """
     
+    WINDOW_WIDTH = 1100
+    WINDOW_HEIGHT = 850
     WINDOW_MIN_WIDTH = 900
     WINDOW_MIN_HEIGHT = 650
     
+    QUEUE_LIST_HEIGHT = 350
+    QUEUE_ITEM_HEIGHT = 120
+    PROGRESS_BAR_HEIGHT = 35
+    QUEUE_ITEM_PROGRESS_HEIGHT = 20
+    INPUT_FIELD_HEIGHT = 30
+    
+    PROGRESS_WIDGET_HEIGHT = 120
     PROGRESS_WIDGET_MIN_HEIGHT = 120
     
     SPACING_SMALL = 5

@@ -4,6 +4,7 @@ File selection widget.
 This module provides a widget for selecting input text files.
 """
 
+from pathlib import Path
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog
 from PyQt6.QtCore import pyqtSignal, Qt
 from src.gui.styles import Styles
@@ -17,6 +18,7 @@ class FileSelectorWidget(QWidget):
     """
     
     fileSelected = pyqtSignal(str)
+    fileBasenameExtracted = pyqtSignal(str)
     
     def __init__(
             self,
@@ -38,6 +40,12 @@ class FileSelectorWidget(QWidget):
         """Sets up the user interface components."""
         layout = QVBoxLayout()
         layout.setSpacing(Styles.SPACING_SMALL)
+        layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0
+        )
         
         label = QLabel("Input Text File:")
         label.setStyleSheet(Styles.LABEL_FIELD)
@@ -81,10 +89,14 @@ class FileSelectorWidget(QWidget):
                 self._file_label.width() - 10
             )
             self._file_label.setText(elided_path)
-            self._file_label.setToolTip(file_path) # Show full path on hover
+            self._file_label.setToolTip(file_path)
             
             self._file_label.setStyleSheet(Styles.LABEL_FILE_DISPLAY)
             self.fileSelected.emit(file_path)
+            
+            # Extract basename without extension
+            file_basename = Path(file_path).stem
+            self.fileBasenameExtracted.emit(file_basename)
     
     def get_selected_file(
             self

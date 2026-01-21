@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
         """Initialize the MainWindow."""
         super().__init__()
         self._setup_ui()
+        self._connect_signals()
     
     def _setup_ui(
             self
@@ -38,10 +39,10 @@ class MainWindow(QMainWindow):
         """Sets up the user interface components."""
         self.setWindowTitle("ReadAloud - Text to Speech")
         
-        # Use minimum size instead of fixed size for responsiveness
-        self.setMinimumSize(
-            Styles.WINDOW_MIN_WIDTH,
-            Styles.WINDOW_MIN_HEIGHT
+        # Set fixed window size for predictable layout
+        self.setFixedSize(
+            Styles.WINDOW_WIDTH,
+            Styles.WINDOW_HEIGHT
         )
         
         # Main central widget
@@ -49,35 +50,22 @@ class MainWindow(QMainWindow):
         main_widget.setStyleSheet(Styles.MAIN_WINDOW_STYLE)
         self.setCentralWidget(main_widget)
         
-        # Layout for the main widget
+        # Main layout
         main_layout = QVBoxLayout(main_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        
-        # Scroll Area to handle different resolutions and scaling
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll_area.setStyleSheet(Styles.MAIN_WINDOW_STYLE) # Match background
-        
-        # Content widget inside scroll area
-        scroll_content = QWidget()
-        scroll_content.setStyleSheet(Styles.MAIN_WINDOW_STYLE)
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(
+        main_layout.setContentsMargins(
             Styles.MARGIN,
             Styles.MARGIN,
             Styles.MARGIN,
             Styles.MARGIN
         )
-        scroll_layout.setSpacing(Styles.SPACING_LARGE)
+        main_layout.setSpacing(Styles.SPACING_LARGE)
         
         # --- UI Components ---
         
         title_label = QLabel("ReadAloud - Text to Speech Generator")
         title_label.setStyleSheet(Styles.LABEL_TITLE)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        scroll_layout.addWidget(title_label)
+        main_layout.addWidget(title_label)
         
         # Configuration Card
         config_card = QWidget()
@@ -118,41 +106,38 @@ class MainWindow(QMainWindow):
         
         card_layout.addLayout(settings_layout)
         
-        scroll_layout.addWidget(config_card)
+        main_layout.addWidget(config_card)
         
         # Progress area
         self.progress_display = ProgressDisplayWidget()
-        scroll_layout.addWidget(self.progress_display)
+        main_layout.addWidget(self.progress_display)
         
         # Queue List
         self.queue_list = QueueListWidget()
-        scroll_layout.addWidget(self.queue_list)
+        main_layout.addWidget(self.queue_list)
         
-        # Add stretch to push content up if window is tall
-        scroll_layout.addStretch()
-        
-        # Set scroll content
-        scroll_area.setWidget(scroll_content)
-        main_layout.addWidget(scroll_area)
-        
-        # Bottom controls (outside scroll area? No, maybe inside is better if window is small)
-        # However, usually buttons should be always visible. 
-        # But if the window is very small, buttons might cover content. 
-        # Let's put buttons inside scroll area to be safe against very small screens, 
-        # OR put them in a persistent bottom bar. 
-        # Given "Adaptive Interface", persistent bottom bar is standard.
-        # But for simplicity and safety, putting them inside scroll area guarantees access.
-        # Let's try putting them at the bottom of the main layout (outside scroll) for a "sticky footer" feel.
-        
+        # Control Buttons at bottom
         self.control_buttons = ControlButtonsWidget()
-        # Add some padding/margin for the footer
-        footer_container = QWidget()
-        footer_container.setStyleSheet(Styles.MAIN_WINDOW_STYLE)
-        footer_layout = QVBoxLayout(footer_container)
-        footer_layout.setContentsMargins(Styles.MARGIN, 10, Styles.MARGIN, Styles.MARGIN)
-        footer_layout.addWidget(self.control_buttons)
+        main_layout.addWidget(self.control_buttons)
+    
+    def _connect_signals(
+            self
+    ) -> None:
+        """Connects internal widget signals."""
+        self.file_selector.fileBasenameExtracted.connect(self._on_file_basename_extracted)
+    
+    def _on_file_basename_extracted(
+            self,
+            basename: str
+    ) -> None:
+        """
+        Handles file basename extraction signal.
         
-        main_layout.addWidget(footer_container)
+        Args:
+            basename: Extracted file basename without extension
+        """
+        if not self.project_input.is_user_modified():
+            self.project_input.set_project_name(basename)
     
     def set_inputs_enabled(
             self,
