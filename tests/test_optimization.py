@@ -118,7 +118,19 @@ def test_audio_assembler_copy_codec():
 def test_app_controller_batch_logic():
     print("Testing AppController Batch Logic...")
     
-    with patch('src.domain.audio_assembler.Path') as mock_path_cls:
+    with patch('src.domain.audio_assembler.Path') as mock_path_cls, \
+         patch('src.domain.models.Path') as mock_models_path:
+        
+        # Configure Path mocks
+        mock_path_instance = MagicMock()
+        mock_path_instance.exists.return_value = True
+        mock_path_instance.parent.exists.return_value = True
+        mock_path_instance.is_dir.return_value = True
+        mock_path_instance.resolve.return_value.as_posix.return_value = "/tmp/safe/path"
+        
+        mock_path_cls.return_value = mock_path_instance
+        mock_models_path.return_value = mock_path_instance
+        
         # Check logic
         controller = ApplicationController()
         
@@ -130,7 +142,15 @@ def test_app_controller_batch_logic():
         controller._text_chunker = MagicMock()
         
         # Mock Config
-        config = ProjectConfig("test", "in.txt", "en", "male", 1.0, 1, "out")
+        config = ProjectConfig(
+            project_name="test",
+            input_file_path="in.txt",
+            language="en",
+            gender="male",
+            thread_count=1,
+            output_dir_path="out",
+            speed=1.0
+        )
         
         # Prepare Controller
         controller.start_generation(config)

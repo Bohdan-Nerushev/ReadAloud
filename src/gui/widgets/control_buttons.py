@@ -40,10 +40,12 @@ class ControlButtonsWidget(QWidget):
         layout = QHBoxLayout()
         layout.setSpacing(Styles.SPACING_MEDIUM)
         
-        self._start_button = QPushButton("Start Generation")
+        self._start_button = QPushButton("Add to Queue")
         self._start_button.setStyleSheet(Styles.BUTTON_START)
         self._start_button.clicked.connect(self._on_start_clicked)
         layout.addWidget(self._start_button)
+        
+        layout.addStretch()
         
         self._pause_button = QPushButton("Pause")
         self._pause_button.setStyleSheet(Styles.BUTTON_PAUSE)
@@ -90,7 +92,8 @@ class ControlButtonsWidget(QWidget):
             self
     ) -> None:
         """Sets buttons to running state (Pause and Stop visible)."""
-        self._start_button.hide()
+        self._start_button.show()
+        self._start_button.setEnabled(True)
         self._pause_button.setText("Pause")
         self._pause_button.show()
         self._stop_button.show()

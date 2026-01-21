@@ -7,19 +7,23 @@ This module orchestrates the entire application, coordinating between GUI, domai
 import logging
 import threading
 import re
+import time
 from pathlib import Path
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Any, Dict, Set
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
-from src.domain.models import ProjectConfig, AudioChunk
+from src.domain.models import ProjectConfig, AudioChunk, GenerationTask, TaskStatus
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
 from src.domain.audio_generator import AudioGenerator
 from src.domain.audio_assembler import AudioAssembler
+from src.domain.exceptions import ReadAloudException
 from src.infrastructure.file_manager import FileManager
 from src.infrastructure.progress_tracker import ProgressTracker
-from src.infrastructure.thread_manager import ThreadManager, ThreadState
+from src.infrastructure.thread_manager import ThreadManager
 from src.infrastructure.retry_handler import RetryHandler
+from src.application.services.queue_service import QueueService
 
 
 class PreparationWorker(QThread):
@@ -82,107 +86,185 @@ class PreparationWorker(QThread):
 class ApplicationController(QObject):
     """
     Central controller that orchestrates audio generation workflow.
-    
-    Manages application state, coordinates services, and communicates with GUI via signals.
     """
-    
+
     progressUpdated = pyqtSignal(int, int, str)
-    assemblyProgressUpdated = pyqtSignal(float, float)  # percentage, remaining seconds
+    assemblyProgressUpdated = pyqtSignal(float, float)
     generationCompleted = pyqtSignal(str)
     errorOccurred = pyqtSignal(str)
-    
+
+    taskAdded = pyqtSignal(GenerationTask)
+    taskUpdated = pyqtSignal(GenerationTask)
+    queueStatusChanged = pyqtSignal(bool)
+
     def __init__(
-            self
+            self,
+            queue_service: QueueService,
+            text_processor: TextProcessor,
+            text_chunker: TextChunker,
+            audio_generator: AudioGenerator,
+            audio_assembler: AudioAssembler,
+            file_manager: FileManager,
+            retry_handler: RetryHandler
     ) -> None:
         """Initialize the ApplicationController."""
         super().__init__()
-        
-        self._text_processor = TextProcessor()
-        self._text_chunker = TextChunker()
-        self._audio_generator = AudioGenerator()
-        self._audio_assembler = AudioAssembler()
-        self._file_manager = FileManager()
-        self._retry_handler = RetryHandler()
-        
+
+        self._queue_service = queue_service
+        self._text_processor = text_processor
+        self._text_chunker = text_chunker
+        self._audio_generator = audio_generator
+        self._audio_assembler = audio_assembler
+        self._file_manager = file_manager
+        self._retry_handler = retry_handler
+
         self._thread_manager: Optional[ThreadManager] = None
         self._progress_tracker: Optional[ProgressTracker] = None
         self._prep_worker: Optional[PreparationWorker] = None
-        
+
         self._text_dir: Optional[str] = None
         self._audio_dir: Optional[str] = None
         self._chunks: List[AudioChunk] = []
-        self._audio_files: List[Any] = [] # List[Optional[str]]
-        
+        self._audio_files: List[Any] = []
+
         self._is_stopped = False
-        self.config: Optional[ProjectConfig] = None
-        
+
         self._progress_timer = QTimer()
         self._progress_timer.timeout.connect(self._update_progress_display)
         self._completion_timer: Optional[QTimer] = None
-        
-        # Batch assembly
+
         self.BATCH_SIZE = 50
         self._batch_submitted: Set[int] = set()
         self._batch_results: Dict[int, str] = {}
         self._assembly_executor: Optional[ThreadPoolExecutor] = None
-        
+
         self._last_signal_time = 0
         self._signal_throttle_ms = 100
-    
-    def start_generation(
+
+        self._setup_service_subscriptions()
+
+    def _setup_service_subscriptions(
+            self
+    ) -> None:
+        """Sets up subscriptions to service events."""
+        self._queue_service.subscribe_task_added(self.taskAdded.emit)
+        self._queue_service.subscribe_task_updated(self.taskUpdated.emit)
+        self._queue_service.subscribe_status_changed(self.queueStatusChanged.emit)
+
+    def add_task(
             self,
             config: ProjectConfig
-    ) -> bool:
+    ) -> None:
         """
-        Starts the audio generation process.
-        
+        Adds a new task to the queue.
+
         Args:
-            config: Project configuration containing all necessary parameters
-            
-        Returns:
-            True if started successfully (moved to background), False otherwise
+            config: Project configuration for the task
         """
+        self._queue_service.add_task(config)
+        self._process_queue()
+
+    def _process_queue(
+            self
+    ) -> None:
+        """Processes the next task in the queue if idle."""
+        task = self._queue_service.get_next_task()
+        if task:
+            self._start_task(task)
+
+    def _get_current_task(
+            self
+    ) -> Optional[GenerationTask]:
+        """Returns the current task being processed."""
+        return self._queue_service.get_current_task()
+
+    def _start_task(
+            self,
+            task: GenerationTask
+    ) -> bool:
+        """Starts the audio generation process for a specific task."""
         try:
-            self._is_stopped = False
-            self.config = config
-            
-            # Reset state
-            self._chunks = []
-            self._audio_files = []
-            self._text_dir = None
-            self._audio_dir = None
-            
-            # Reset batch assembly
-            self._batch_submitted = set()
-            self._batch_results = {}
-            # Max 2 concurrent assembly tasks (ffmpeg is heavy)
-            self._assembly_executor = ThreadPoolExecutor(max_workers=2)
-            
-            # Show "Preparing..." state
-            # We use 0, 0, "Preparing..." to indicate indefinite progress
-            self.progressUpdated.emit(0, 0, "Preparing...")
-            
-            self._prep_worker = PreparationWorker(
-                config,
-                self._file_manager,
-                self._text_processor,
-                self._text_chunker
-            )
-            self._prep_worker.finished.connect(self._on_preparation_finished)
-            self._prep_worker.error.connect(self._on_preparation_error)
-            self._prep_worker.start()
-            
+            self._initialize_task_state(task)
+            self._start_preparation_worker(task)
             return True
-            
         except Exception as e:
-            logging.error(f"Failed to start generation: {e}", exc_info=True)
-            self.errorOccurred.emit(f"Failed to start generation: {str(e)}")
+            logging.error(f"Failed to start task: {e}", exc_info=True)
+            self._handle_task_failure(f"Failed to start: {str(e)}")
             return False
 
+    def _initialize_task_state(
+            self,
+            task: GenerationTask
+    ) -> None:
+        """Initializes state for a new task."""
+        self._is_stopped = False
+        self._queue_service.update_task_status(
+            TaskStatus.PROCESSING,
+            "Preparing..."
+        )
+
+        self._chunks = []
+        self._audio_files = []
+        self._text_dir = None
+        self._audio_dir = None
+
+        self._batch_submitted = set()
+        self._batch_results = {}
+        self._assembly_executor = ThreadPoolExecutor(max_workers=2)
+
+        self.progressUpdated.emit(0, 0, "Preparing...")
+
+    def _start_preparation_worker(
+            self,
+            task: GenerationTask
+    ) -> None:
+        """Starts the preparation worker thread."""
+        self._prep_worker = PreparationWorker(
+            task.config,
+            self._file_manager,
+            self._text_processor,
+            self._text_chunker
+        )
+        self._prep_worker.finished.connect(self._on_preparation_finished)
+        self._prep_worker.error.connect(self._on_preparation_error)
+        self._prep_worker.start()
+
+    def _handle_task_failure(
+            self,
+            error_msg: str
+    ) -> None:
+        """Handles task failure and moves to next."""
+        self._queue_service.update_task_status(
+            TaskStatus.FAILED,
+            error_msg
+        )
+        self.errorOccurred.emit(error_msg)
+        self._finalize_task()
+
+    def _finalize_task(
+            self
+    ) -> None:
+        """Clean up current task and process next."""
+        self._queue_service.finalize_current_task()
+        self._cleanup_active_resources()
+        self._process_queue()
+
+    def _cleanup_active_resources(
+            self
+    ) -> None:
+        """Stops active threads and timers."""
+        if self._thread_manager:
+            self._thread_manager.stop()
+
+        self._progress_timer.stop()
+
+        if self._completion_timer:
+            self._completion_timer.stop()
+
     def _on_preparation_finished(
-            self, 
-            chunks: List[AudioChunk], 
-            text_dir: str, 
+            self,
+            chunks: List[AudioChunk],
+            text_dir: str,
             audio_dir: str
     ) -> None:
         """Called when preparation worker completes successfullly."""
@@ -194,33 +276,47 @@ class ApplicationController(QObject):
             self._text_dir = text_dir
             self._audio_dir = audio_dir
             self._audio_files = [None] * len(chunks)
-            
-            logging.info(f"Starting processing of {len(chunks)} chunks using {self.config.thread_count} threads.")
-            
-            self._progress_tracker = ProgressTracker(
-                total_chunks=len(self._chunks)
-            )
-            self._progress_tracker.start()
-            
-            self._thread_manager = ThreadManager(
-                thread_count=self.config.thread_count
-            )
-            self._thread_manager.start()
-            
-            for chunk in self._chunks:
-                self._thread_manager.submit_task(
-                    self._generate_chunk_audio,
-                    chunk,
-                    self.config.language,
-                    self.config.gender
-                )
-            
-            self._progress_timer.start(500)
-            self._monitor_completion()
-            
+
+            self._start_generation_process()
         except Exception as e:
             logging.error(f"Error after preparation: {e}", exc_info=True)
             self.errorOccurred.emit(f"System error after preparation: {e}")
+
+    def _start_generation_process(
+            self
+    ) -> None:
+        """Initializes and starts the generation trackers and threads."""
+        task = self._get_current_task()
+        if not task:
+            return
+
+        self._progress_tracker = ProgressTracker(
+            total_chunks=len(self._chunks)
+        )
+        self._progress_tracker.start()
+
+        self._thread_manager = ThreadManager(
+            thread_count=task.config.thread_count
+        )
+        self._thread_manager.start()
+
+        self._submit_chunks_to_threads(task)
+
+        self._progress_timer.start(500)
+        self._monitor_completion()
+
+    def _submit_chunks_to_threads(
+            self,
+            task: GenerationTask
+    ) -> None:
+        """Submits all chunks to the thread manager."""
+        for chunk in self._chunks:
+            self._thread_manager.submit_task(
+                self._generate_chunk_audio,
+                chunk,
+                task.config.language,
+                task.config.gender
+            )
 
     def _on_preparation_error(self, error_msg: str) -> None:
         """Called when preparation worker fails."""
@@ -245,29 +341,37 @@ class ApplicationController(QObject):
         """Stops the audio generation and cleans up temporary files."""
         self._is_stopped = True
         logging.info("Stopping generation...")
-        
+
+        self._queue_service.update_task_status(
+            TaskStatus.STOPPED,
+            "Stopped by user"
+        )
+
+        self._terminate_prep_worker()
+        self._cleanup_temp_files()
+        self._finalize_task()
+
+    def _terminate_prep_worker(
+            self
+    ) -> None:
+        """Terminates the preparation worker if running."""
         if self._prep_worker and self._prep_worker.isRunning():
             self._prep_worker.terminate()
             self._prep_worker.wait()
-        
-        if self._thread_manager:
-            self._thread_manager.stop()
-        
-        self._progress_timer.stop()
-        if self._completion_timer:
-            self._completion_timer.stop()
-        
+
+    def _cleanup_temp_files(
+            self
+    ) -> None:
+        """Cleans up temporary text and audio directories."""
         try:
             temp_dirs = []
             if self._text_dir:
                 temp_dirs.append(self._text_dir)
             if self._audio_dir:
                 temp_dirs.append(self._audio_dir)
-            
+
             if temp_dirs:
-                self._file_manager.cleanup_temp_directories(
-                    temp_dirs
-                )
+                self._file_manager.cleanup_temp_directories(temp_dirs)
         except Exception as e:
             logging.error(f"Error cleaning up: {e}")
     
@@ -277,12 +381,10 @@ class ApplicationController(QObject):
             language: str,
             gender: str
     ) -> None:
-        """
-        Generates audio for a single chunk with retry logic.
-        """
+        """Generates audio for a single chunk with retry logic."""
         if self._is_stopped:
             return
-        
+
         try:
             audio_path = self._retry_handler.execute_with_retry(
                 self._audio_generator.generate_audio,
@@ -293,38 +395,43 @@ class ApplicationController(QObject):
                 max_retries=5,
                 backoff=2.0
             )
-            
+
             self._audio_files[chunk.chunk_number - 1] = audio_path
             self._progress_tracker.update_progress(success=True)
-            
+
         except Exception as e:
             logging.error(f"Failed chunk {chunk.chunk_number}: {e}")
             self._progress_tracker.update_progress(success=False)
-            # Don't emit error immediately to avoid spamming, just log it. 
-            # The final check will report failures.
     
     def _update_progress_display(
             self
     ) -> None:
         """Updates the progress display via signal."""
-        import time
         current_time = time.time() * 1000
-        
-        # Throttle signals
+
         if (current_time - self._last_signal_time) < self._signal_throttle_ms:
             return
 
         if self._progress_tracker:
-            self._last_signal_time = current_time
-            completed = self._progress_tracker.get_completed_count()
-            total = self._progress_tracker.get_total_count()
-            eta = self._progress_tracker.get_eta_string()
-            
-            self.progressUpdated.emit(
-                self._progress_tracker.get_processed_count(),
-                total,
-                eta
-            )
+            self._emit_progress_signals(current_time)
+
+    def _emit_progress_signals(
+            self,
+            current_time: float
+    ) -> None:
+        """Emits progress signals for UI and task updates."""
+        self._last_signal_time = current_time
+        total = self._progress_tracker.get_total_count()
+        eta = self._progress_tracker.get_eta_string()
+
+        self.progressUpdated.emit(
+            self._progress_tracker.get_processed_count(),
+            total,
+            eta
+        )
+
+        percentage = self._progress_tracker.get_progress_percentage()
+        self._queue_service.update_task_progress(percentage)
     
     def _monitor_completion(
             self
@@ -365,116 +472,157 @@ class ApplicationController(QObject):
     def _finalize_generation(
             self
     ) -> None:
-        """
-        Finalizes generation by assembling audio and cleaning up.
-        """
-        if not self.config:
+        """Finalizes generation by assembling audio and cleaning up."""
+        task = self._get_current_task()
+        if not task:
             return
 
         logging.info("Finalizing generation...")
         try:
-            base_output_dir = Path(self.config.output_dir_path)
-            final_dir = base_output_dir / "final"
-            self._file_manager.ensure_directory_exists(
-                str(final_dir)
-            )
-            
-            # Sanitize filename
-            safe_name = self._sanitize_filename(self.config.project_name)
-            output_path = final_dir / f"{safe_name}.mp3"
-            
+            output_path = self._prepare_output_path(task)
+            self._start_assembly_thread(output_path)
         except Exception as e:
-            logging.error(f"Failed to prepare output directory: {e}")
-            self.errorOccurred.emit(
-                f"Failed to prepare output directory: {str(e)}"
-            )
-            return
+            logging.error(f"Failed to prepare final generation: {e}")
+            self.errorOccurred.emit(f"Failed to prepare final generation: {str(e)}")
 
-        valid_audio_files = [
-            f for f in self._audio_files if f is not None
-        ]
+    def _prepare_output_path(
+            self,
+            task: GenerationTask
+    ) -> Path:
+        """Prepares the output directory and returns the final MP3 path."""
+        base_output_dir = Path(task.config.output_dir_path)
+        final_dir = base_output_dir / "final"
+        self._file_manager.ensure_directory_exists(str(final_dir))
 
-        if not valid_audio_files:
-            logging.error("No valid audio files generated")
-            self.errorOccurred.emit(
-                "No audio files were generated successfully"
-            )
-            return
-            
-        def _assembly_progress_callback(percentage: float, remaining: float) -> None:
-             self.assemblyProgressUpdated.emit(percentage, remaining)
+        safe_name = self._sanitize_filename(task.config.project_name)
+        return final_dir / f"{safe_name}.mp3"
 
-        def _assembly_task() -> None:
-            try:
-                # 1. Ensure all batches are submitted
-                self._check_batch_assembly()
-                
-                # 2. Wait for all batch assemblies to complete
-                logging.info("Waiting for background assembly tasks...")
-                if self._assembly_executor:
-                    self._assembly_executor.shutdown(wait=True)
-                
-                # 3. Check results
-                total_batches = (len(self._chunks) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
-                ordered_parts = []
-                use_batch_result = True
-                
-                for i in range(total_batches):
-                    if i in self._batch_results:
-                        ordered_parts.append(self._batch_results[i])
-                    else:
-                        logging.warning(f"Batch {i} result missing. Falling back to full assembly.")
-                        use_batch_result = False
-                        break
-                
-                if use_batch_result and ordered_parts:
-                    logging.info(f"Assembling {len(ordered_parts)} pre-processed parts (Fast mode)")
-                    self._audio_assembler.assemble_audio(
-                        ordered_parts,
-                        str(output_path),
-                        speed=1.0,  # Speed already applied in batches
-                        callback=_assembly_progress_callback,
-                        copy_codec=True # Fast merge
-                    )
-                else:
-                    logging.info(f"Assembling {len(valid_audio_files)} raw chunks (Fallback mode)")
-                    self._audio_assembler.assemble_audio(
-                        valid_audio_files,
-                        str(output_path),
-                        speed=self.config.speed,
-                        callback=_assembly_progress_callback,
-                        copy_codec=False # Full process
-                    )
-                
-                temp_dirs = []
-                if self._text_dir:
-                    temp_dirs.append(self._text_dir)
-                if self._audio_dir:
-                    temp_dirs.append(self._audio_dir)
-                
-                self._file_manager.cleanup_temp_directories(
-                    temp_dirs
-                )
-                
-                self.generationCompleted.emit(
-                    str(output_path)
-                )
-                
-                failed_count = self._progress_tracker.get_failed_count()
-                if failed_count > 0:
-                    self.errorOccurred.emit(
-                        f"Warning: {failed_count} chunks failed to generate and were skipped."
-                    )
-                    
-            except Exception as e:
-                logging.error(f"Assembly failed: {e}", exc_info=True)
-                self.errorOccurred.emit(
-                    f"Failed to finalize generation: {str(e)}"
-                )
-
-        # Run assembly in a separate thread to prevent GUI freezing
-        thread = threading.Thread(target=_assembly_task, daemon=True)
+    def _start_assembly_thread(
+            self,
+            output_path: Path
+    ) -> None:
+        """Starts the background assembly thread."""
+        thread = threading.Thread(
+            target=self._execute_assembly_workflow,
+            args=(output_path,),
+            daemon=True
+        )
         thread.start()
+
+    def _execute_assembly_workflow(
+            self,
+            output_path: Path
+    ) -> None:
+        """Core assembly workflow executed in a separate thread."""
+        try:
+            self._check_batch_assembly()
+            self._wait_for_batches()
+            self._perform_final_assembly(output_path)
+            self._cleanup_temp_files()
+            self._mark_task_completed()
+        except Exception as e:
+            self._handle_assembly_error(e)
+
+    def _wait_for_batches(
+            self
+    ) -> None:
+        """Waits for all background batch assembly tasks to complete."""
+        logging.info("Waiting for background assembly tasks...")
+        if self._assembly_executor:
+            self._assembly_executor.shutdown(wait=True)
+
+    def _perform_final_assembly(
+            self,
+            output_path: Path
+    ) -> None:
+        """Decides on assembly strategy and performs final merge."""
+        task = self._get_current_task()
+        valid_files = [f for f in self._audio_files if f is not None]
+
+        if not valid_files:
+            raise ReadAloudException("No audio files were generated successfully")
+
+        parts, use_fast_mode = self._get_assembly_parts()
+
+        if use_fast_mode:
+            self._assemble_fast(parts, output_path)
+        else:
+            self._assemble_full(valid_files, output_path, task.config.speed)
+
+    def _get_assembly_parts(
+            self
+    ) -> tuple[List[str], bool]:
+        """Determines if fast assembly via pre-processed batches is possible."""
+        total_batches = (len(self._chunks) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        ordered_parts = []
+
+        for i in range(total_batches):
+            if i not in self._batch_results:
+                return [], False
+            ordered_parts.append(self._batch_results[i])
+
+        return ordered_parts, True
+
+    def _assemble_fast(
+            self,
+            parts: List[str],
+            output_path: Path
+    ) -> None:
+        """Assembles pre-processed parts using fast copy codec."""
+        logging.info(f"Assembling {len(parts)} parts (Fast mode)")
+        self._audio_assembler.assemble_audio(
+            parts,
+            str(output_path),
+            speed=1.0,
+            callback=self._assembly_progress_callback,
+            copy_codec=True
+        )
+
+    def _assemble_full(
+            self,
+            files: List[str],
+            output_path: Path,
+            speed: float
+    ) -> None:
+        """Assembles raw chunks using full processing."""
+        logging.info(f"Assembling {len(files)} chunks (Fallback mode)")
+        self._audio_assembler.assemble_audio(
+            files,
+            str(output_path),
+            speed=speed,
+            callback=self._assembly_progress_callback,
+            copy_codec=False
+        )
+
+    def _assembly_progress_callback(
+            self,
+            percentage: float,
+            remaining: float
+    ) -> None:
+        """Callback for assembly progress signals."""
+        self.assemblyProgressUpdated.emit(percentage, remaining)
+
+    def _mark_task_completed(
+            self
+    ) -> None:
+        """Updates current task success state and cleans up."""
+        self._queue_service.update_task_progress(100.0)
+        self._queue_service.update_task_status(
+            TaskStatus.COMPLETED,
+            "Done"
+        )
+
+        self._finalize_task()
+
+    def _handle_assembly_error(
+            self,
+            error: Exception
+    ) -> None:
+        """Handles errors occurring during background assembly."""
+        error_msg = str(error)
+        logging.error(f"Assembly failed: {error}", exc_info=True)
+        self.errorOccurred.emit(f"Failed to finalize generation: {error_msg}")
+        self._handle_task_failure(error_msg)
     
     def _check_batch_assembly(self) -> None:
         """Checks if enough chunks are ready for a batch merge."""
@@ -495,25 +643,28 @@ class ApplicationController(QObject):
                 self._trigger_batch_assembly(i, start_idx, end_idx)
 
     def _trigger_batch_assembly(
-            self, 
-            batch_index: int, 
-            start_idx: int, 
+            self,
+            batch_index: int,
+            start_idx: int,
             end_idx: int
     ) -> None:
         """Triggers a background assembly task for a batch."""
+        task = self._get_current_task()
+        if not task:
+            return
+
         self._batch_submitted.add(batch_index)
-        
+
         chunk_files = self._audio_files[start_idx:end_idx]
         output_dir = Path(self._audio_dir)
         part_path = output_dir / f"part_{batch_index}.mp3"
-        
+
         def _assemble_task():
             try:
-                # Apply speed here (re-encode)
                 self._audio_assembler.assemble_audio(
                     chunk_files,
                     str(part_path),
-                    speed=self.config.speed,
+                    speed=task.config.speed,
                     copy_codec=False
                 )
                 return str(part_path)
@@ -522,15 +673,12 @@ class ApplicationController(QObject):
                 raise
 
         future = self._assembly_executor.submit(_assemble_task)
-        
+
         def _done_callback(fut):
             try:
                 result_path = fut.result()
                 self._batch_results[batch_index] = result_path
             except Exception as e:
-                # If batch fails, we can't easily recover in this architecture 
-                # without complex retry logic. 
-                # For now, we log it. Final assembly will detect missing parts.
                 logging.error(f"Batch {batch_index} callback error: {e}")
 
         future.add_done_callback(_done_callback)

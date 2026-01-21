@@ -15,6 +15,7 @@ from src.gui.widgets.speed_selector import SpeedSelectorWidget
 from src.gui.widgets.progress_display import ProgressDisplayWidget
 from src.gui.widgets.control_buttons import ControlButtonsWidget
 from src.gui.widgets.output_selector import OutputSelectorWidget
+from src.gui.widgets.queue_list import QueueListWidget
 from src.gui.styles import Styles
 
 class MainWindow(QMainWindow):
@@ -122,6 +123,10 @@ class MainWindow(QMainWindow):
         # Progress area
         self.progress_display = ProgressDisplayWidget()
         scroll_layout.addWidget(self.progress_display)
+        
+        # Queue List
+        self.queue_list = QueueListWidget()
+        scroll_layout.addWidget(self.queue_list)
         
         # Add stretch to push content up if window is tall
         scroll_layout.addStretch()

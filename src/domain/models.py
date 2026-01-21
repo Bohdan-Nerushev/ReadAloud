@@ -4,21 +4,20 @@ Domain models for the ReadAloud application.
 This module contains immutable value objects representing core domain concepts.
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from datetime import datetime
+import uuid
+import re
+from enum import Enum
+from dataclasses import dataclass, field
+from typing import Optional, Final
 from pathlib import Path
+from src.domain.exceptions import ConfigurationException
 
 
 @dataclass(frozen=True)
 class ProjectConfig:
     """
     Configuration for a text-to-speech project.
-    
-    Attributes:
-        project_name: Name of the output MP3 file (without extension)
-        input_file_path: Path to the input text file
-        language: Language code for speech synthesis (en, uk, de, ru)
-        thread_count: Number of concurrent threads for audio generation (1-30)
     """
     project_name: str
     input_file_path: str
@@ -33,74 +32,73 @@ class ProjectConfig:
     ) -> None:
         """
         Validates the configuration after initialization.
-        
+
         Raises:
-            ValueError: If any validation constraint is violated
+            ConfigurationException: If any validation constraint is violated
         """
         if not self.project_name or not self.project_name.strip():
-            raise ValueError(
+            raise ConfigurationException(
                 "Project name cannot be empty"
             )
-            
-        import re
+
         if not re.match(r'^[\w\-. ]+$', self.project_name):
-            raise ValueError(
+            raise ConfigurationException(
                 "Project name contains invalid characters. Use letters, numbers, spaces, dashes and underscores only."
             )
-        
+
         if not self.input_file_path:
-            raise ValueError(
+            raise ConfigurationException(
                 "Input file path cannot be empty"
             )
-        
+
         input_path = Path(
             self.input_file_path
         )
         if not input_path.exists():
-            raise ValueError(
+            raise ConfigurationException(
                 f"Input file does not exist: {self.input_file_path}"
             )
-        
+
         if not input_path.is_file():
-            raise ValueError(
+            raise ConfigurationException(
                 f"Input path is not a file: {self.input_file_path}"
             )
-        
-        allowed_languages = {"en", "uk", "de", "ru"}
+
+        allowed_languages: Final = {"en", "uk", "de", "ru"}
         if self.language not in allowed_languages:
-            raise ValueError(
+            raise ConfigurationException(
                 f"Language must be one of {allowed_languages}, got: {self.language}"
             )
-        
-        allowed_genders = {"male", "female"}
+
+        allowed_genders: Final = {"male", "female"}
         if self.gender not in allowed_genders:
-            raise ValueError(
+            raise ConfigurationException(
                 f"Gender must be one of {allowed_genders}, got: {self.gender}"
             )
-        
+
         if not 1 <= self.thread_count <= 30:
-            raise ValueError(
+            raise ConfigurationException(
                 f"Thread count must be between 1 and 30, got: {self.thread_count}"
             )
-        
+
         if not 0.5 <= self.speed <= 2.0:
-            raise ValueError(
+            raise ConfigurationException(
                 f"Speed must be between 0.5 and 2.0, got: {self.speed}"
             )
-            
+
         if not self.output_dir_path:
-            raise ValueError(
+            raise ConfigurationException(
                 "Output directory path cannot be empty"
             )
-            
+
         output_dir = Path(self.output_dir_path)
         if not output_dir.exists():
-            raise ValueError(
+            raise ConfigurationException(
                 f"Output directory does not exist: {self.output_dir_path}"
             )
-        
+
         if not output_dir.is_dir():
-            raise ValueError(
+            raise ConfigurationException(
                 f"Output path is not a directory: {self.output_dir_path}"
             )
 
@@ -109,12 +107,6 @@ class ProjectConfig:
 class AudioChunk:
     """
     Represents a numbered chunk of text to be converted to audio.
-    
-    Attributes:
-        chunk_number: Sequential number of this chunk (1-indexed)
-        text_content: The text content of this chunk
-        text_file_path: Optional path where this chunk's text is saved
-        audio_file_path: Optional path where this chunk's audio is saved
     """
     chunk_number: int
     text_content: str
@@ -126,17 +118,17 @@ class AudioChunk:
     ) -> None:
         """
         Validates the chunk after initialization.
-        
+
         Raises:
-            ValueError: If any validation constraint is violated
+            ConfigurationException: If any validation constraint is violated
         """
         if self.chunk_number < 1:
-            raise ValueError(
+            raise ConfigurationException(
                 f"Chunk number must be positive, got: {self.chunk_number}"
             )
-        
+
         if not self.text_content:
-            raise ValueError(
+            raise ConfigurationException(
                 "Text content cannot be empty"
             )
     
@@ -179,3 +171,46 @@ class AudioChunk:
             text_file_path=self.text_file_path,
             audio_file_path=path
         )
+
+
+class TaskStatus(Enum):
+    """Status of a generation task."""
+    PENDING = "Pending"
+    PROCESSING = "Processing"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+    STOPPED = "Stopped"
+
+
+@dataclass
+class GenerationTask:
+    """
+    Represents a queued audio generation task.
+    """
+    config: ProjectConfig
+    id: uuid.UUID = field(
+        default_factory=uuid.uuid4
+    )
+    status: TaskStatus = TaskStatus.PENDING
+    progress: float = 0.0
+    message: str = "Waiting..."
+    created_at: datetime = field(
+        default_factory=datetime.now
+    )
+
+    def update_status(
+            self,
+            status: TaskStatus,
+            message: str = ""
+    ) -> None:
+        """Updates task status and message."""
+        self.status = status
+        if message:
+            self.message = message
+
+    def update_progress(
+            self,
+            progress: float
+    ) -> None:
+        """Updates task progress."""
+        self.progress = progress
