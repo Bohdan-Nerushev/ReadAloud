@@ -104,6 +104,35 @@ class QueueService:
         """Returns the current task being processed."""
         return self._current_task
 
+    def remove_task(
+            self,
+            task_id: str
+    ) -> bool:
+        """
+        Removes a task from the queue by ID.
+        
+        Args:
+            task_id: ID of the task to remove
+            
+        Returns:
+            True if removed, False otherwise
+        """
+        for i, task in enumerate(self._task_queue):
+            if str(task.id) == task_id:
+                # Remove from deque
+                del self._task_queue[i]
+                logging.info(f"Task {task_id} removed from queue.")
+                return True
+        return False
+
+    def get_all_tasks(self) -> List[GenerationTask]:
+        """Returns all tasks including current and pending."""
+        tasks = []
+        if self._current_task:
+            tasks.append(self._current_task)
+        tasks.extend(list(self._task_queue))
+        return tasks
+
     def subscribe_task_added(
             self,
             callback: Callable[[GenerationTask], None]

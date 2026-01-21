@@ -4,6 +4,7 @@ Text preprocessing service.
 This module handles cleaning and sanitizing text before chunking and audio generation.
 """
 
+import re
 from typing import Optional
 
 
@@ -19,7 +20,15 @@ class TextProcessor:
             self
     ) -> None:
         """Initialize the TextProcessor."""
-        pass
+        # Compile regex patterns for performance
+        # Pattern to remove ", ', ***, and ======
+        self._sanitization_pattern = re.compile(
+            r'["\']|\*\*\*|======'
+        )
+        # Pattern to replace newlines with four spaces
+        self._newline_pattern = re.compile(
+            r'\n'
+        )
     
     def process_text(
             self,
@@ -49,31 +58,16 @@ class TextProcessor:
                 "Input text cannot be None"
             )
         
-        processed = raw_text
-        
-        processed = processed.replace(
-            '"',
-            ''
+        # Single-pass sanitization using compiled regex
+        processed = self._sanitization_pattern.sub(
+            '',
+            raw_text
         )
         
-        processed = processed.replace(
-            "'",
-            ''
-        )
-        
-        processed = processed.replace(
-            '***',
-            ''
-        )
-        
-        processed = processed.replace(
-            '======',
-            ''
-        )
-        
-        processed = processed.replace(
-            '\n',
-            '    '
+        # Replace newlines
+        processed = self._newline_pattern.sub(
+            '    ',
+            processed
         )
         
         return processed

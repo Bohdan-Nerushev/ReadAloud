@@ -7,6 +7,25 @@ This module handles concatenation of individual audio chunks into a final MP3 fi
 from typing import List
 from pathlib import Path
 import subprocess
+import atexit
+import signal
+import logging
+from typing import Set
+
+# Global registry for active subprocesses
+_ACTIVE_PROCESSES: Set[subprocess.Popen] = set()
+
+def _cleanup_processes():
+    """Kills all active subprocesses on exit."""
+    if _ACTIVE_PROCESSES:
+        logging.info(f"Cleaning up {len(_ACTIVE_PROCESSES)} active subprocesses...")
+        for p in list(_ACTIVE_PROCESSES):
+            try:
+                p.kill()
+            except Exception:
+                pass
+
+atexit.register(_cleanup_processes)
 
 
 class AudioAssembler:
@@ -105,8 +124,9 @@ class AudioAssembler:
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                text=True
             )
+            _ACTIVE_PROCESSES.add(process)
 
             import re
             import time
@@ -114,37 +134,41 @@ class AudioAssembler:
             start_time = time.time()
             time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)")
 
-            # Read stderr line by line
-            while True:
-                line = process.stderr.readline()
-                if not line:
-                    if process.poll() is not None:
-                        break
-                    continue
-                
-                if callback and total_duration > 0:
-                    match = time_pattern.search(line)
-                    if match:
-                        hours, minutes, seconds = map(float, match.groups())
-                        current_seconds = hours * 3600 + minutes * 60 + seconds
-                        
-                        # Adjust for atempo=1.25 (ffmpeg reports input time, but we care about total input processed)
-                        # Actually ffmpeg time usually reports output timestamp. 
-                        # Since we speed up by 1.25, the output duration will be Total / 1.25.
-                        # And 'time' in stats is output time.
-                        # So progress is current_output_time / (total_duration / 1.25)
-                        
-                        expected_output_duration = total_duration / speed
-                        percentage = min(100, (current_seconds / expected_output_duration) * 100) if expected_output_duration > 0 else 0
-                        
-                        elapsed = time.time() - start_time
-                        if percentage > 0:
-                            total_estimated = elapsed * (100 / percentage)
-                            remaining = total_estimated - elapsed
-                            callback(percentage, remaining)
+            try:
+                # Read stderr line by line
+                while True:
+                    line = process.stderr.readline()
+                    if not line:
+                        if process.poll() is not None:
+                            break
+                        continue
+                    
+                    if callback and total_duration > 0:
+                        match = time_pattern.search(line)
+                        if match:
+                            hours, minutes, seconds = map(float, match.groups())
+                            current_seconds = hours * 3600 + minutes * 60 + seconds
+                            
+                            expected_output_duration = total_duration / speed
+                            percentage = min(100, (current_seconds / expected_output_duration) * 100) if expected_output_duration > 0 else 0
+                            
+                            elapsed = time.time() - start_time
+                            if percentage > 0:
+                                total_estimated = elapsed * (100 / percentage)
+                                remaining = total_estimated - elapsed
+                                callback(percentage, remaining)
 
-            if process.returncode != 0:
-                raise Exception(f"ffmpeg exited with code {process.returncode}")
+                if process.returncode != 0:
+                    raise Exception(f"ffmpeg exited with code {process.returncode}")
+            
+            finally:
+                _ACTIVE_PROCESSES.discard(process)
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
             
         except subprocess.CalledProcessError as e:
             raise Exception(

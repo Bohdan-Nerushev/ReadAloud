@@ -16,8 +16,7 @@ class QueueListWidget(QWidget):
     Widget displaying the queue of tasks.
     """
     
-    taskPauseRequested = pyqtSignal(str)  # task_id
-    taskCancelRequested = pyqtSignal(str)  # task_id
+    taskDeleteRequested = pyqtSignal(str) # task_id
     
     def __init__(
             self,
@@ -40,7 +39,7 @@ class QueueListWidget(QWidget):
         
         # List
         self._list_widget = QListWidget()
-        self._list_widget.setFixedHeight(Styles.QUEUE_LIST_HEIGHT)
+        self._list_widget.setMinimumHeight(Styles.QUEUE_LIST_HEIGHT)
         self._list_widget.setStyleSheet(f"""
             QListWidget {{
                 background-color: {Palette.BG_MAIN};
@@ -67,8 +66,7 @@ class QueueListWidget(QWidget):
         widget = QueueItemWidget(task)
         
         # Connect signals from queue item
-        widget.pauseRequested.connect(self.taskPauseRequested.emit)
-        widget.cancelRequested.connect(self.taskCancelRequested.emit)
+        widget.deleteRequested.connect(self.taskDeleteRequested.emit)
         
         item.setSizeHint(widget.sizeHint())
         

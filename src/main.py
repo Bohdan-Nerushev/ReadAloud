@@ -15,19 +15,13 @@ if project_root not in sys.path:
 
 from src.infrastructure.logging_config import setup_logging
 from src.infrastructure.system_check import check_dependencies
+from src.infrastructure.ioc import Container
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.gui.main_window import MainWindow
 from src.application.app_controller import ApplicationController
-from src.domain.models import ProjectConfig
-from src.domain.text_processor import TextProcessor
-from src.domain.text_chunker import TextChunker
-from src.domain.audio_generator import AudioGenerator
-from src.domain.audio_assembler import AudioAssembler
+from src.domain.models import ProjectConfig, TaskStatus
 from src.domain.exceptions import ConfigurationException
-from src.infrastructure.file_manager import FileManager
-from src.infrastructure.retry_handler import RetryHandler
-from src.application.services.queue_service import QueueService
 
 
 class ReadAloudApplication:
@@ -50,21 +44,20 @@ class ReadAloudApplication:
     ) -> None:
         """Sets up signals and slots."""
         self._window.control_buttons.startClicked.connect(self._on_start_clicked)
-        self._window.control_buttons.pauseClicked.connect(self._on_pause_clicked)
-        self._window.control_buttons.stopClicked.connect(self._on_stop_clicked)
 
         self._controller.progressUpdated.connect(self._on_progress_updated)
         self._controller.assemblyProgressUpdated.connect(self._on_assembly_progress_updated)
         self._controller.errorOccurred.connect(self._on_error_occurred)
+        self._controller.globalProgressUpdated.connect(self._window.progress_display.update_global_progress)
 
         self._controller.taskAdded.connect(self._window.queue_list.add_task)
         self._controller.taskUpdated.connect(self._window.queue_list.update_task)
         self._controller.taskUpdated.connect(self._on_task_updated)
         self._controller.queueStatusChanged.connect(self._on_queue_status_changed)
         
-        # Connect queue list signals
-        self._window.queue_list.taskPauseRequested.connect(self._on_task_pause_requested)
-        self._window.queue_list.taskCancelRequested.connect(self._on_task_cancel_requested)
+        # Connect queue list signals (per-task controls)
+        # Connect queue list signals (per-task controls)
+        self._window.queue_list.taskDeleteRequested.connect(self._on_task_delete_requested)
 
     def _on_start_clicked(
             self
@@ -74,11 +67,7 @@ class ReadAloudApplication:
             config = self._build_config_from_ui()
             self._controller.add_task(config)
 
-            QMessageBox.information(
-                self._window,
-                "Task Added",
-                f"Task '{config.project_name}' added to queue."
-            )
+            logging.info(f"Task '{config.project_name}' added to queue.")
         except ConfigurationException as e:
             QMessageBox.warning(self._window, "Validation Error", str(e))
         except Exception as e:
@@ -99,30 +88,6 @@ class ReadAloudApplication:
             output_dir_path=self._window.output_selector.get_selected_directory()
         )
 
-    def _on_pause_clicked(
-            self
-    ) -> None:
-        """Handles pause/resume button click."""
-        self._controller.pause_generation()
-        if self._controller.is_paused():
-            self._window.control_buttons.set_paused_state()
-        else:
-            self._window.control_buttons.set_running_state()
-
-    def _on_stop_clicked(
-            self
-    ) -> None:
-        """Handles stop button click."""
-        reply = QMessageBox.question(
-            self._window,
-            "Confirm Stop",
-            "Are you sure you want to stop generation? Temporary files will be deleted.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            self._controller.stop_generation()
 
     def _on_progress_updated(
             self,
@@ -156,41 +121,26 @@ class ReadAloudApplication:
         """Handles queue activity status changes."""
         if active:
             self._window.control_buttons.set_running_state()
+            self._window.progress_display.show()
         else:
             self._window.control_buttons.set_idle_state()
     
-    def _on_task_pause_requested(
-            self,
-            task_id: str
-    ) -> None:
-        """
-        Handles pause request for a specific task.
-        
-        Args:
-            task_id: ID of the task to pause
-        """
-        self._controller.pause_generation()
+
     
-    def _on_task_cancel_requested(
+    def _on_task_delete_requested(
             self,
             task_id: str
     ) -> None:
         """
-        Handles cancel request for a specific task.
-        
-        Args:
-            task_id: ID of the task to cancel
+        Handles delete/cancel request for a specific task.
         """
-        reply = QMessageBox.question(
-            self._window,
-            "Confirm Cancel",
-            "Are you sure you want to cancel this task?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
+        # For non-processing tasks, we might not need a confirmation if it's just removing from queue
+        try:
             self._controller.cancel_task(task_id)
+            self._window.queue_list.remove_task(task_id)
+        except Exception as e:
+            logging.error(f"Failed to delete task {task_id}: {e}", exc_info=True)
+            QMessageBox.warning(self._window, "Error", f"Failed to delete task: {e}")
     
     def _on_task_updated(
             self,
@@ -202,8 +152,6 @@ class ReadAloudApplication:
         Args:
             task: Updated task
         """
-        from src.domain.models import TaskStatus
-        
         # Auto-remove completed tasks after a delay
         if task.status == TaskStatus.COMPLETED:
             # Remove from UI after task is done
@@ -222,24 +170,9 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        # Dependency Injection Container (Manual)
-        queue_service = QueueService()
-        text_processor = TextProcessor()
-        text_chunker = TextChunker()
-        audio_generator = AudioGenerator()
-        audio_assembler = AudioAssembler()
-        file_manager = FileManager()
-        retry_handler = RetryHandler()
-
-        controller = ApplicationController(
-            queue_service=queue_service,
-            text_processor=text_processor,
-            text_chunker=text_chunker,
-            audio_generator=audio_generator,
-            audio_assembler=audio_assembler,
-            file_manager=file_manager,
-            retry_handler=retry_handler
-        )
+        # Dependency Injection via Container
+        container = Container()
+        controller = container.app_controller
 
         window = MainWindow()
         coordinator = ReadAloudApplication(window, controller)

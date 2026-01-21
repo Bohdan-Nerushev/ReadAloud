@@ -59,27 +59,37 @@ class TextChunker:
         chunk_number = 1
         
         while current_position < len(text):
-            end_position = min(
-                current_position + chunk_size,
-                len(text)
-            )
+            target_end = current_position + chunk_size
             
-            if end_position < len(text):
-                while end_position < len(text) and text[end_position] not in ' \t':
-                    end_position += 1
+            if target_end >= len(text):
+                end_position = len(text)
+            else:
+                # Find next space or tab starting from target_end
+                space_pos = text.find(' ', target_end)
+                tab_pos = text.find('\t', target_end)
                 
+                # Take the nearest delimiter
+                if space_pos == -1:
+                    end_position = tab_pos if tab_pos != -1 else len(text)
+                elif tab_pos == -1:
+                    end_position = space_pos
+                else:
+                    end_position = min(space_pos, tab_pos)
+                
+                # Include the space/tab in the current chunk if found
                 if end_position < len(text):
                     end_position += 1
             
             chunk_text = text[current_position:end_position]
             
-            chunk = AudioChunk(
-                chunk_number=chunk_number,
-                text_content=chunk_text
-            )
-            chunks.append(chunk)
+            if chunk_text:
+                chunk = AudioChunk(
+                    chunk_number=chunk_number,
+                    text_content=chunk_text
+                )
+                chunks.append(chunk)
+                chunk_number += 1
             
             current_position = end_position
-            chunk_number += 1
         
         return chunks

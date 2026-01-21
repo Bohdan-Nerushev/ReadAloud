@@ -7,6 +7,7 @@ This module handles file system operations including directory creation, file sa
 import shutil
 from pathlib import Path
 from datetime import datetime
+from functools import lru_cache
 from src.domain.models import AudioChunk
 
 
@@ -23,6 +24,11 @@ class FileManager:
     ) -> None:
         """Initialize the FileManager."""
         pass
+
+    @lru_cache(maxsize=128)
+    def _get_path(self, path_str: str) -> Path:
+        """Cached conversion of string to Path object."""
+        return Path(path_str)
     
     def create_timestamped_dir(
             self,
@@ -50,7 +56,7 @@ class FileManager:
                 "Base name cannot be empty"
             )
         
-        parent_path = Path(parent_dir)
+        parent_path = self._get_path(parent_dir)
         if not parent_path.exists():
             raise ValueError(
                 f"Parent directory does not exist: {parent_dir}"
@@ -94,7 +100,7 @@ class FileManager:
                 "Chunk cannot be None"
             )
         
-        dir_path = Path(directory)
+        dir_path = self._get_path(directory)
         if not dir_path.exists():
             raise ValueError(
                 f"Directory does not exist: {directory}"
@@ -103,11 +109,19 @@ class FileManager:
         filename = f"{chunk.chunk_number}.txt"
         file_path = dir_path / filename
         
+        # Adaptive buffer size based on content length
+        # Default to 8KB, max 64KB, or 2x content size
+        content_len = len(chunk.text_content)
+        buffer_size = max(
+            8192,
+            min(content_len * 2, 65536)
+        )
+        
         with open(
                 file_path,
                 'w',
                 encoding='utf-8',
-                buffering=1024*1024  # 1MB buffer
+                buffering=buffer_size
         ) as f:
             f.write(chunk.text_content)
         
@@ -127,7 +141,7 @@ class FileManager:
             Exception: If deletion fails for any directory
         """
         for directory in directories:
-            dir_path = Path(directory)
+            dir_path = self._get_path(directory)
             if dir_path.exists() and dir_path.is_dir():
                 try:
                     shutil.rmtree(dir_path)
@@ -154,7 +168,7 @@ class FileManager:
                 "Path cannot be empty"
             )
         
-        dir_path = Path(path)
+        dir_path = self._get_path(path)
         dir_path.mkdir(
             parents=True,
             exist_ok=True

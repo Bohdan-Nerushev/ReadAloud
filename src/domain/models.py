@@ -180,6 +180,7 @@ class TaskStatus(Enum):
     COMPLETED = "Completed"
     FAILED = "Failed"
     STOPPED = "Stopped"
+    PAUSED = "Paused"
 
 
 @dataclass

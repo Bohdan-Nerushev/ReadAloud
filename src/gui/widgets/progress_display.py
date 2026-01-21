@@ -51,6 +51,11 @@ class ProgressDisplayWidget(QWidget):
         self._status_label.setStyleSheet(Styles.LABEL_STATUS)
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._status_label)
+
+        self._global_status_label = QLabel("")
+        self._global_status_label.setStyleSheet("font-size: 13px; color: #555; font-style: italic;")
+        self._global_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._global_status_label)
         
         self.setLayout(layout)
     
@@ -83,6 +88,7 @@ class ProgressDisplayWidget(QWidget):
         """Resets the progress display to initial state."""
         self._progress_bar.setValue(0)
         self._status_label.setText("")
+        self._global_status_label.setText("")
     
     def set_complete(
             self
@@ -90,6 +96,7 @@ class ProgressDisplayWidget(QWidget):
         """Sets the progress display to show completion."""
         self._progress_bar.setValue(100)
         self._status_label.setText("Generation complete!")
+        self._global_status_label.setText("")
 
     def update_assembly_progress(
             self,
@@ -110,3 +117,19 @@ class ProgressDisplayWidget(QWidget):
         eta_str = f"{minutes:02d}:{seconds:02d}"
         
         self._status_label.setText(f"Assembling audio... {percentage:.1f}% | ETA: {eta_str}")
+
+    def update_global_progress(
+            self,
+            percentage: float,
+            eta: str
+    ) -> None:
+        """
+        Updates the global progress display.
+        
+        Args:
+            percentage: Global completion percentage
+            eta: Global estimated time to completion
+        """
+        self._global_status_label.setText(
+            f"Global Queue Progress: {int(percentage)}%    |    Total ETA: {eta}"
+        )

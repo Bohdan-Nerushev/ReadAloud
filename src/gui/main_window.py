@@ -39,10 +39,14 @@ class MainWindow(QMainWindow):
         """Sets up the user interface components."""
         self.setWindowTitle("ReadAloud - Text to Speech")
         
-        # Set fixed window size for predictable layout
-        self.setFixedSize(
+        # Set initial window size
+        self.resize(
             Styles.WINDOW_WIDTH,
             Styles.WINDOW_HEIGHT
+        )
+        self.setMinimumSize(
+            Styles.WINDOW_MIN_WIDTH,
+            Styles.WINDOW_MIN_HEIGHT
         )
         
         # Main central widget
@@ -114,7 +118,7 @@ class MainWindow(QMainWindow):
         
         # Queue List
         self.queue_list = QueueListWidget()
-        main_layout.addWidget(self.queue_list)
+        main_layout.addWidget(self.queue_list, stretch=1)
         
         # Control Buttons at bottom
         self.control_buttons = ControlButtonsWidget()

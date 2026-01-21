@@ -8,7 +8,7 @@ import asyncio
 import logging
 import threading
 from pathlib import Path
-import edge_tts
+from typing import Any, List
 from src.domain.models import AudioChunk
 
 
@@ -44,23 +44,31 @@ class AudioGenerator:
             self
     ) -> None:
         """Initialize the AudioGenerator."""
-        # Thread-local storage for event loops
-        self._thread_local = threading.local()
+        self._edge_tts = None
+        
+        # Initialize single background loop
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(
+            target=self._start_background_loop,
+            args=(self._loop,),
+            daemon=True
+        )
+        self._loop_thread.start()
+
+    def _start_background_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Runs the asyncio loop in a separate thread."""
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
     
-    def _get_or_create_loop(self) -> asyncio.AbstractEventLoop:
-        """
-        Gets or creates an event loop for the current thread.
-        
-        Returns:
-            The event loop for the current thread.
-        """
-        if not hasattr(self._thread_local, 'loop'):
-            # Create a new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self._thread_local.loop = loop
-        
-        return self._thread_local.loop
+    @property
+    def edge_tts(self) -> Any:
+        """Lazy load edge_tts module."""
+        if self._edge_tts is None:
+            import edge_tts
+            self._edge_tts = edge_tts
+        return self._edge_tts
+    
+    # Removed _get_or_create_loop as we use a single loop now
 
     def generate_audio(
             self,
@@ -87,10 +95,41 @@ class AudioGenerator:
             ValueError: If chunk/parameters are invalid or voice is not found
             Exception: If generation fails
         """
-        if chunk is None:
-            raise ValueError("Chunk cannot be None")
+        # Batch size 1 implementation using the new batch logic
+        results = self.generate_audio_batch(
+            [chunk],
+            language,
+            gender,
+            output_dir
+        )
+        return results[0]
+
+    def generate_audio_batch(
+            self,
+            chunks: List[AudioChunk],
+            language: str,
+            gender: str,
+            output_dir: str
+    ) -> List[str]:
+        """
+        Generates multiple audio files from text chunks concurrently.
         
-        # Voice Validation
+        Args:
+            chunks: List of AudioChunk objects
+            language: Language code
+            gender: Voice gender
+            output_dir: Output directory
+            
+        Returns:
+            List of absolute paths to generated audio files
+            
+        Raises:
+            ValueError: If parameters are invalid
+            Exception: If generation fails for any chunk
+        """
+        if not chunks:
+            return []
+            
         if language not in self.VOICE_MAPPING:
             raise ValueError(f"Unsupported language code: {language}")
             
@@ -101,30 +140,26 @@ class AudioGenerator:
         voice = voice_map[gender]
         
         output_path = Path(output_dir)
-        if not output_path.exists():
-            raise ValueError(f"Output directory does not exist: {output_dir}")
-        
-        if not output_path.is_dir():
-            raise ValueError(f"Output path is not a directory: {output_dir}")
-        
-        audio_filename = f"{chunk.chunk_number}.mp3"
-        audio_file_path = output_path / audio_filename
-        
-        async def _generate() -> None:
-            try:
-                communicate = edge_tts.Communicate(chunk.text_content, voice)
-                await communicate.save(str(audio_file_path))
-            except Exception as async_err:
-                 # Re-raise to be caught by main try block
-                 raise async_err
-            
+        if not output_path.exists() or not output_path.is_dir():
+            raise ValueError(f"Invalid output directory: {output_dir}")
+
+        async def _generate_one(c: AudioChunk) -> str:
+            audio_path = output_path / f"{c.chunk_number}.mp3"
+            communicate = self.edge_tts.Communicate(c.text_content, voice)
+            await communicate.save(str(audio_path))
+            return str(audio_path.absolute())
+
+        async def _generate_all() -> List[str]:
+            return await asyncio.gather(
+                *[_generate_one(c) for c in chunks]
+            )
+
         try:
-            # Reuse thread-local event loop
-            loop = self._get_or_create_loop()
-            loop.run_until_complete(_generate())
-            
+            future = asyncio.run_coroutine_threadsafe(
+                _generate_all(), 
+                self._loop
+            )
+            return future.result()
         except Exception as e:
-            logging.error(f"Failed to generate audio for chunk {chunk.chunk_number}: {e}")
-            raise Exception(f"Failed to generate audio for chunk {chunk.chunk_number}: {str(e)}") from e
-        
-        return str(audio_file_path.absolute())
+            logging.error(f"Batch generation failed: {e}")
+            raise Exception(f"Batch generation failed: {str(e)}") from e
