@@ -1,28 +1,36 @@
-# ReadAloud - Text to Speech Application
+# ReadAloud - High-Performance Text-to-Speech Application
 
-A professional desktop application for converting text files to MP3 audio using Google Text-to-Speech (gTTS).
+A professional-grade desktop application built with Python and PyQt6 for converting complex text documents into high-quality MP3 audio. Powered by Microsoft Edge TTS for natural-sounding synthesis.
 
-## Features
+## 🚀 Key Features
 
-- **Multi-language Support**: English, Ukrainian, German, and Russian
-- **Multi-threaded Processing**: Generate audio files with 1-5 concurrent threads
-- **Smart Text Processing**: Automatically handles special characters and text chunking
-- **Progress Tracking**: Real-time progress display with estimated completion time
-- **Pause/Resume**: Control generation with pause/resume functionality
-- **Clean Architecture**: Built following OOP, SOLID, and DRY principles
+- **Queue Management**: Add multiple tasks to a processing queue and manage them concurrently.
+- **Next-Gen Synthesis**: Uses Microsoft Edge TTS for superior, human-like voice quality.
+- **Advanced Audio Controls**:
+  - **Speed Regulation**: Adjust playback speed from 0.5x to 2.0x.
+  - **Gender Selection**: Choose between Male and Female voices for supported languages.
+  - **Multi-threaded Generation**: High-speed processing with up to 30 concurrent threads.
+- **Smart Text Engine**:
+  - Automatic sanitization of special characters.
+  - Intelligent text chunking (word-boundary aware).
+  - Parallel I/O operations for text and audio preparation.
+- **Real-Time Monitoring**:
+  - Per-task progress tracking with percentage and status.
+  - Global ETA calculation for the entire queue.
+  - Interactive Pause/Resume/Delete controls.
+- **Enterprise-Ready Logging**: Structured logging with Correlation IDs for debugging complex async flows.
 
-## System Requirements
+## 🛠 System Requirements
 
 - **Python**: 3.10 or higher
-- **Operating System**: Linux (Ubuntu/Debian recommended)
-- **FFmpeg**: Required for audio processing
+- **FFmpeg**: Essential for audio stream assembly and speed adjustments.
+- **OS**: Linux (tested on Ubuntu/Debian, Fedora, Arch).
 
-### Installing System Dependencies (FFmpeg, libxcb-cursor)
+### Installing System Dependencies
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install ffmpeg libxcb-cursor0
+sudo apt-get update && sudo apt-get install ffmpeg libxcb-cursor0
 
 # Fedora
 sudo dnf install ffmpeg libxcb-cursor
@@ -31,137 +39,68 @@ sudo dnf install ffmpeg libxcb-cursor
 sudo pacman -S ffmpeg libxcb-cursor
 ```
 
-## Installation
+## 📦 Installation
 
-1. Clone or download the repository:
-```bash
-cd /home/bnerushev/PycharmProjects/ReadAloud
-```
+1. **Clone the repository**:
+   ```bash
+   git clone <repository-url>
+   cd ReadAloud
+   ```
 
-2. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
+2. **Set up virtual environment (recommended)**:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   ```
 
-## Usage
+3. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### Running the Application
+## 🖥 Usage
 
+### Starting the Application
 ```bash
 ./start.sh
 ```
 
-### Using the GUI
+### Configuration Parameters
+1. **Project Name**: Unique identifier (used for the final filename).
+2. **Input File**: Select any `.txt` file containing UTF-8 encoded text.
+3. **Voice Settings**:
+   - **Language**: English, Ukrainian, German, Russian.
+   - **Gender**: Switch between available voice models.
+   - **Speed**: Fine-tune the speech pace (1.0 is standard).
+4. **Threads**: Set concurrency level (1-30). Higher values speed up large files but require stable internet.
 
-1. **Project Name**: Enter a name for your output MP3 file (without extension)
-2. **Input File**: Click "Browse..." to select a .txt file
-3. **Language**: Choose the speech synthesis language from the dropdown
-4. **Threads**: Select the number of concurrent threads (1-5)
-   - 1 thread: Slower but more stable
-   - 5 threads: Faster but may encounter rate limiting
-5. **Start Generation**: Click to begin audio generation
-6. **Pause**: Temporarily halt generation (can be resumed)
-7. **Stop**: Cancel generation and clean up temporary files
+## 🏗 Architecture & Design Principles
 
-### Output
+The project adheres to strict **Senior/Staff Engineer** standards:
 
-Generated MP3 files are saved to the `final/` directory in your project folder.
+- **SOLID Principles**: Each component (Services, Controller, GUI) has a single responsibility.
+- **Service Layer Pattern**: Logic is decoupled from the UI into specialized services (`QueueService`, `GenerationService`, `AssemblyService`).
+- **Domain-Driven Design**: Core logic uses immutable `ProjectConfig` and `AudioChunk` models.
+- **Thread Safety**: Robust GUI interaction using `QThread` and signal/slot mechanisms to prevent race conditions.
+- **Defensive Programming**: Comprehensive validation at system boundaries using Jakarta-style patterns and explicit null safety.
 
-## Project Structure
-
-```
-ReadAloud/
-├── src/
-│   ├── domain/              # Core business logic
-│   │   ├── models.py        # Domain models
-│   │   ├── text_processor.py
-│   │   ├── text_chunker.py
-│   │   ├── audio_generator.py
-│   │   └── audio_assembler.py
-│   ├── infrastructure/      # Technical utilities
-│   │   ├── file_manager.py
-│   │   ├── progress_tracker.py
-│   │   ├── thread_manager.py
-│   │   └── retry_handler.py
-│   ├── gui/                 # User interface
-│   │   ├── main_window.py
-│   │   ├── styles.py
-│   │   └── widgets/
-│   ├── application/         # Application coordination
-│   │   └── app_controller.py
-│   └── main.py              # Entry point
-├── tests/                   # Unit tests
-├── final/                   # Output directory
-└── requirements.txt
+### Project Structure
+```text
+src/
+├── application/       # Orchestration and Service layer
+│   └── services/      # Business logic implementation
+├── domain/            # Models, Exceptions, and core interfaces
+├── infrastructure/    # File I/O, Logging, and technical utilities
+├── gui/               # PyQt6 components and modern styling
+└── main.py            # Application entry point
 ```
 
-## Technical Details
+## 🛡 Stability & Performance
 
-### Text Processing
+- **Graceful Shutdown**: Prevents zombie `ffmpeg` processes and ensures temporary file cleanup.
+- **Exponential Backoff**: Automatic retry logic for network-dependent TTS calls.
+- **Resource Optimization**: Parallel chunk processing with `ThreadPoolExecutor`.
 
-The application automatically:
-- Removes dangerous characters: `"`, `'`, `***`, `======`
-- Replaces newlines with 4 spaces
-- Splits text into ~180 character chunks (respecting word boundaries)
+## 📄 License
 
-### Audio Generation
-
-- Uses gTTS (Google Text-to-Speech) API
-- Implements automatic retry logic with exponential backoff
-- Supports concurrent generation with thread pooling
-- Assembles chunks into final MP3 using pydub
-
-### Supported Languages
-
-| Language   | Code |
-|------------|------|
-| English    | en   |
-| Ukrainian  | uk   |
-| German     | de   |
-| Russian    | ru   |
-
-## Troubleshooting
-
-### "No module named 'PyQt6'"
-```bash
-pip install PyQt6
-```
-
-### "ffmpeg: command not found"
-Install FFmpeg using the instructions in System Requirements section.
-
-### "Rate limit exceeded" or generation failures
-- Reduce the number of threads
-- Wait a few minutes and try again
-- The application will automatically retry failed chunks
-
-### Application won't start
-1. Ensure Python 3.10+ is installed:
-```bash
-python --version
-```
-
-2. If you see "Could not load the Qt platform plugin xcb", install the missing library:
-```bash
-sudo apt-get install libxcb-cursor0
-```
-
-## Architecture
-
-This application follows enterprise-level coding standards:
-
-- **OOP Principles**: Encapsulation, abstraction, inheritance, polymorphism
-- **SOLID Principles**: Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion
-- **DRY Principle**: No code duplication
-- **Clean Code**: 120-character line limit, explicit type hints, comprehensive validation
-
-## License
-
-This project is provided as-is for educational and personal use.
-
-## Support
-
-For issues or questions, please check:
-1. This README file
-2. The Troubleshooting section
-3. Python and FFmpeg documentation
+This project is developed for enterprise-level demonstration and personal use. All rights reserved.
