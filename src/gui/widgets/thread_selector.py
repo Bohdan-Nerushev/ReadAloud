@@ -44,14 +44,14 @@ class ThreadSelectorWidget(QWidget):
             0
         )
         
-        label = QLabel("Number of Threads (1-30):")
+        label = QLabel("Number of Threads (1-50):")
         label.setStyleSheet(Styles.LABEL_FIELD)
         layout.addWidget(label)
         
         self._spinbox = QSpinBox()
         self._spinbox.setStyleSheet(Styles.INPUT_STYLE)
         self._spinbox.setMinimum(1)
-        self._spinbox.setMaximum(30)
+        self._spinbox.setMaximum(50)
         self._spinbox.setValue(1)
         self._spinbox.valueChanged.connect(self._on_value_changed)
         layout.addWidget(self._spinbox)
@@ -77,6 +77,6 @@ class ThreadSelectorWidget(QWidget):
         Returns the currently selected thread count.
         
         Returns:
-            Thread count (1-30)
+            Thread count (1-50)
         """
         return self._spinbox.value()

@@ -25,7 +25,7 @@ class TextChunker:
     def chunk_text(
             self,
             text: str,
-            chunk_size: int = 180
+            chunk_size: int = 1000
     ) -> List[AudioChunk]:
         """
         Splits text into chunks of approximately chunk_size characters.
