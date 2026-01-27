@@ -21,6 +21,8 @@ from src.infrastructure.file_manager import FileManager
 from src.application.services.queue_service import QueueService
 from src.application.services.generation_service import GenerationService
 from src.application.services.assembly_service import AssemblyService
+from src.infrastructure.logging_config import set_correlation_id
+
 
 
 class PreparationWorker(QThread):
@@ -33,6 +35,7 @@ class PreparationWorker(QThread):
     
     def __init__(
             self,
+            task_id: str,
             config: ProjectConfig,
             file_manager: FileManager,
             text_processor: TextProcessor,
@@ -40,15 +43,22 @@ class PreparationWorker(QThread):
     ) -> None:
         """Initialize the worker."""
         super().__init__()
+        self.task_id = task_id
         self.config = config
         self.file_manager = file_manager
         self.text_processor = text_processor
         self.text_chunker = text_chunker
+
         
     def run(self) -> None:
         """Execute the preparation tasks."""
+        # Set correlation ID for this worker thread
+        set_correlation_id(self.task_id)
+
+        
         try:
             logging.info(f"Starting preparation for input: {self.config.input_file_path}")
+
             
             # Read
             with open(self.config.input_file_path, 'r', encoding='utf-8') as f:
@@ -196,6 +206,10 @@ class ApplicationController(QObject):
     def _start_task(self, task: GenerationTask) -> bool:
         """Starts the audio generation process for a specific task."""
         try:
+            set_correlation_id(str(task.id))
+            
+            logging.info(f"Starting task: {task.id} ({task.config.project_name})")
+
             self._initialize_task_state(task)
             self._start_preparation_worker(task)
             return True
@@ -203,6 +217,7 @@ class ApplicationController(QObject):
             logging.error(f"Failed to start task: {e}", exc_info=True)
             self._handle_task_failure(f"Failed to start: {str(e)}")
             return False
+
 
     def _initialize_task_state(self, task: GenerationTask) -> None:
         """Initializes state for a new task."""
@@ -222,6 +237,7 @@ class ApplicationController(QObject):
     def _start_preparation_worker(self, task: GenerationTask) -> None:
         """Starts the preparation worker thread."""
         self._prep_worker = PreparationWorker(
+            str(task.id),
             task.config,
             self._file_manager,
             self._text_processor,
