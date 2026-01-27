@@ -76,7 +76,7 @@ class QueueListWidget(QWidget):
             widget
         )
         
-        self._items[task.id] = widget
+        self._items[str(task.id)] = widget
         
         # Scroll to bottom
         self._list_widget.scrollToBottom()
@@ -88,8 +88,9 @@ class QueueListWidget(QWidget):
         """
         Updates an existing task in the list.
         """
-        if task.id in self._items:
-            self._items[task.id].update_task(task)
+        task_id_str = str(task.id)
+        if task_id_str in self._items:
+            self._items[task_id_str].update_task(task)
     
     def remove_task(
             self,

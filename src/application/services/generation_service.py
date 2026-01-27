@@ -19,7 +19,8 @@ class GenerationService(QObject):
     
     # Signals to communicate with Controller/UI
     progressUpdated = pyqtSignal(int, int, str)  # processed, total, eta
-    chunkGenerated = pyqtSignal(int, str)        # chunk_number, file_path
+    chunkGenerated = pyqtSignal(int, str, float) # chunk_number, file_path, duration
+    batchGenerated = pyqtSignal(list)             # list of (chunk_number, file_path, duration)
     batchFailed = pyqtSignal(list, str)          # list of chunks, error message
     errorOccurred = pyqtSignal(str)
 
@@ -107,7 +108,7 @@ class GenerationService(QObject):
 
         try:
             # Wrapped call to include rate limiting internally in the loop thread
-            audio_paths = self._retry_handler.execute_with_retry(
+            results = self._retry_handler.execute_with_retry(
                 self._execute_batch_with_semaphore,
                 batch,
                 language,
@@ -117,13 +118,21 @@ class GenerationService(QObject):
                 backoff=2.0
             )
             
+            batch_results = []
             # Emit success for each chunk
             for i, chunk in enumerate(batch):
                 if self._is_stopped: 
                     break
-                logging.debug(f"Chunk {chunk.chunk_number} generated: {audio_paths[i]}")
-                self.chunkGenerated.emit(chunk.chunk_number, audio_paths[i])
+                file_path, duration = results[i]
+                logging.debug(f"Chunk {chunk.chunk_number} generated: {file_path} ({duration}s)")
+                
+                # We emit individual signals and a batch signal for reliability
+                self.chunkGenerated.emit(chunk.chunk_number, file_path, duration)
+                batch_results.append((chunk.chunk_number, file_path, duration))
                 self._update_internal_progress(success=True)
+            
+            if not self._is_stopped:
+                self.batchGenerated.emit(batch_results)
 
         except Exception as e:
             logging.error(f"Generation batch failed: {e}")
@@ -176,15 +185,16 @@ class GenerationService(QObject):
             self._progress_tracker.update_progress(success)
             pass
 
-    def get_progress_info(self) -> tuple[int, int, str]:
-        """Returns (processed, total, eta_string)."""
+    def get_progress_info(self) -> tuple[int, int, str, float]:
+        """Returns (processed, total, eta_string, chunks_per_second)."""
         if self._progress_tracker:
              return (
                  self._progress_tracker.get_processed_count(),
                  self._progress_tracker.get_total_count(),
-                 self._progress_tracker.get_eta_string()
+                 self._progress_tracker.get_eta_string(),
+                 self._progress_tracker.get_chunks_per_second()
              )
-        return 0, 0, ""
+        return 0, 0, "", 0.0
 
     def get_progress_percentage(self) -> float:
         if self._progress_tracker:
@@ -195,9 +205,13 @@ class GenerationService(QObject):
         """Pauses/Resumes. Returns True if PAUSED, False if RUNNING."""
         if self._thread_manager.is_paused():
             self._thread_manager.resume()
+            if self._progress_tracker:
+                self._progress_tracker.resume()
             return False
         else:
             self._thread_manager.pause()
+            if self._progress_tracker:
+                self._progress_tracker.pause()
             return True
 
     def is_paused(self) -> bool:

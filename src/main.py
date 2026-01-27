@@ -95,10 +95,11 @@ class ReadAloudApplication:
             self,
             completed: int,
             total: int,
-            eta: str
+            eta: str,
+            speed: float
     ) -> None:
         """Handles progress update signals."""
-        self._window.progress_display.update_progress(completed, total, eta)
+        self._window.progress_display.update_progress(completed, total, eta, speed)
 
     def _on_assembly_progress_updated(
             self,
@@ -113,8 +114,8 @@ class ReadAloudApplication:
             error_message: str
     ) -> None:
         """Handles error signals."""
-        if "Critical" in error_message or "System" in error_message:
-            QMessageBox.critical(self._window, "Error", error_message)
+        logging.error(f"Error signal received: {error_message}")
+        QMessageBox.warning(self._window, "Generation Error", error_message)
 
     def _on_queue_status_changed(
             self,

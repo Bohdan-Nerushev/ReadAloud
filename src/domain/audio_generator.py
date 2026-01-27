@@ -80,7 +80,7 @@ class AudioGenerator:
             language: str,
             gender: str,
             output_dir: str
-    ) -> str:
+    ) -> tuple[str, float]:
         """
         Generates an audio file from a text chunk.
         """
@@ -98,7 +98,7 @@ class AudioGenerator:
             language: str,
             gender: str,
             output_dir: str
-    ) -> List[str]:
+    ) -> List[tuple[str, float]]:
         """
         Generates multiple audio files from text chunks concurrently with rate limiting.
         """
@@ -113,17 +113,28 @@ class AudioGenerator:
         
         output_path = Path(output_dir)
 
-        async def _generate_one(c: AudioChunk) -> str:
+        async def _generate_one(c: AudioChunk) -> tuple[str, float]:
             audio_path = output_path / f"{c.chunk_number}.mp3"
             communicate = self.edge_tts.Communicate(c.text_content, voice)
             
             # Use the internal semaphore to limit concurrent API requests
             async with self._semaphore:
-                await communicate.save(str(audio_path))
+                # Edge TTS Communicate has no direct way to get duration before saving
+                # but we can try to estimate or use ffprobe quickly here once?
+                # Actually, edge_tts.Communicate.save() doesn't return anything.
+                # Let's use mutagen after save.
+                try:
+                    await asyncio.wait_for(communicate.save(str(audio_path)), timeout=60)
+                except asyncio.TimeoutError:
+                    logging.error(f"Timeout while generating audio for chunk {c.chunk_number}")
+                    raise Exception(f"Timeout while generating audio for chunk {c.chunk_number}")
                 
-            return str(audio_path.absolute())
+                # Fast duration extraction
+                duration = self._get_file_duration_fast(str(audio_path))
+                
+            return str(audio_path.absolute()), duration
 
-        async def _generate_all() -> List[str]:
+        async def _generate_all() -> List[tuple[str, float]]:
             return await asyncio.gather(
                 *[_generate_one(c) for c in chunks]
             )
@@ -137,4 +148,13 @@ class AudioGenerator:
         except Exception as e:
             logging.error(f"Batch generation failed: {e}")
             raise Exception(f"Batch generation failed: {str(e)}") from e
+
+    def _get_file_duration_fast(self, file_path: str) -> float:
+        """Fast duration extraction using mutagen."""
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(file_path)
+            return float(audio.info.length)
+        except Exception:
+            return 0.0
 

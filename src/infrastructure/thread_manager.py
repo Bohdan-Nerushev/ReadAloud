@@ -83,6 +83,9 @@ class ThreadManager:
             
             return task(*task_args, **task_kwargs)
         
+        # Cleanup completed futures to prevent memory leak
+        self._futures = [f for f in self._futures if not f.done()]
+        
         future = self._executor.submit(
             wrapped_task,
             *args,

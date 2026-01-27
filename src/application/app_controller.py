@@ -60,21 +60,58 @@ class PreparationWorker(QThread):
             logging.info(f"Starting preparation for input: {self.config.input_file_path}")
 
             
-            # Read
-            with open(self.config.input_file_path, 'r', encoding='utf-8') as f:
-                raw_text = f.read()
-            
-            # Process
-            if self.isInterruptionRequested():
-                return
+            # Read, Process, and Chunk incrementally to avoid OOM
+            chunks = []
+            chunk_num = 1
+            remaining = ""
+            buffer_size = 10 * 1024 * 1024  # 10MB
 
-            processed_text = self.text_processor.process_text(raw_text)
-            
-            # Chunk
-            if self.isInterruptionRequested():
-                return
-            
-            chunks = self.text_chunker.chunk_text(processed_text)
+            with open(self.config.input_file_path, 'r', encoding='utf-8') as f:
+                while True:
+                    if self.isInterruptionRequested():
+                        return
+
+                    block = f.read(buffer_size)
+                    if not block:
+                        break
+
+                    text = remaining + block
+                    # Ensure we don't split words across buffers
+                    if len(block) == buffer_size:
+                        last_space = text.rfind(' ')
+                        if last_space != -1:
+                            to_chunk = text[:last_space]
+                            remaining = text[last_space:]
+                        else:
+                            # Fallback: process entire block if no space found
+                            to_chunk = text
+                            remaining = ""
+                    else:
+                        to_chunk = text
+                        remaining = ""
+
+                    if to_chunk.strip():
+                        processed = self.text_processor.process_text(to_chunk)
+                        if processed.strip():
+                            block_chunks = self.text_chunker.chunk_text(processed)
+                            for c in block_chunks:
+                                # Create new chunk because AudioChunk is frozen
+                                chunks.append(AudioChunk(
+                                    chunk_number=chunk_num,
+                                    text_content=c.text_content
+                                ))
+                                chunk_num += 1
+
+            if remaining.strip():
+                processed = self.text_processor.process_text(remaining)
+                if processed.strip():
+                    block_chunks = self.text_chunker.chunk_text(processed)
+                    for c in block_chunks:
+                        chunks.append(AudioChunk(
+                            chunk_number=chunk_num,
+                            text_content=c.text_content
+                        ))
+                        chunk_num += 1
             
             if not chunks:
                  raise ValueError("No text chunks generated from input file.")
@@ -83,7 +120,7 @@ class PreparationWorker(QThread):
             if self.isInterruptionRequested():
                 return
 
-            workspace_dir = str(Path(self.config.input_file_path).parent)
+            workspace_dir = str(Path(self.config.input_file_path).expanduser().parent)
             text_dir = self.file_manager.create_timestamped_dir("text", workspace_dir)
             audio_dir = self.file_manager.create_timestamped_dir("audio", workspace_dir)
             
@@ -119,7 +156,7 @@ class ApplicationController(QObject):
     Delegates complex logic to specialized services.
     """
 
-    progressUpdated = pyqtSignal(int, int, str)
+    progressUpdated = pyqtSignal(int, int, str, float) # processed, total, eta_str, chunks_per_sec
     assemblyProgressUpdated = pyqtSignal(float, float)
     generationCompleted = pyqtSignal(str)
     errorOccurred = pyqtSignal(str)
@@ -179,6 +216,7 @@ class ApplicationController(QObject):
         """Sets up connections from generation and assembly services."""
         # Generation Service signals
         self._generation_service.chunkGenerated.connect(self._on_chunk_generated)
+        self._generation_service.batchGenerated.connect(self._on_batch_generated)
         self._generation_service.batchFailed.connect(self._on_batch_failed)
         self._generation_service.errorOccurred.connect(self.errorOccurred.emit)
         
@@ -301,9 +339,9 @@ class ApplicationController(QObject):
             return
 
         self._last_signal_time = current_time
-        processed, total, eta = self._generation_service.get_progress_info()
+        processed, total, eta, speed = self._generation_service.get_progress_info()
         
-        self.progressUpdated.emit(processed, total, eta)
+        self.progressUpdated.emit(processed, total, eta, speed)
 
         # Update Task Progress (Cap at 90%)
         raw_percentage = self._generation_service.get_progress_percentage()
@@ -325,7 +363,7 @@ class ApplicationController(QObject):
 
         # Calculate Global ETA
         # We use current task's ETA and estimate others
-        processed, total, eta_str = self._generation_service.get_progress_info()
+        processed, total, eta_str, speed = self._generation_service.get_progress_info()
         
         # Parse current ETA string (HH:MM:SS) to seconds
         current_eta_seconds = 0
@@ -359,7 +397,7 @@ class ApplicationController(QObject):
 
         self.globalProgressUpdated.emit(global_percentage, global_eta_str)
 
-    def _on_chunk_generated(self, chunk_number: int, file_path: str) -> None:
+    def _on_chunk_generated(self, chunk_number: int, file_path: str, duration: float) -> None:
         """Callback when a chunk is successfully generated."""
         if self._is_stopped:
             return
@@ -368,22 +406,33 @@ class ApplicationController(QObject):
         if 1 <= chunk_number <= len(self._audio_files):
             self._audio_files[chunk_number - 1] = file_path
             
-            # Trigger assembly service to check for batches
-            task = self._get_current_task()
-            if task and self._audio_dir:
-                self._assembly_service.check_and_submit_batches(
-                    self._audio_files,
-                    self._audio_dir,
-                    task.config.speed
-                )
+            # Optimized batch tracking
+            batch_index = self._assembly_service.mark_chunk_ready(chunk_number - 1, duration)
+            if batch_index is not None:
+                task = self._get_current_task()
+                if task and self._audio_dir:
+                    start_idx = batch_index * self._assembly_service.BATCH_SIZE
+                    end_idx = min(start_idx + self._assembly_service.BATCH_SIZE, len(self._audio_files))
+                    batch_files = self._audio_files[start_idx:end_idx]
+                    
+                    self._assembly_service.submit_batch_by_index(
+                        batch_index,
+                        batch_files,
+                        self._audio_dir,
+                        task.config.speed,
+                        str(task.id)
+                    )
+
+    def _on_batch_generated(self, results: List[tuple]) -> None:
+        """Callback for batch generation results to ensure no chunks are missed."""
+        # Individual on_chunk_generated handles most logic, but we can double check here
+        # or use this to further reduce signals if we wanted to.
+        pass
 
     def _on_batch_failed(self, batch: List[AudioChunk], error_msg: str) -> None:
-        """Callback when batch generation fails."""
-        logging.warning(f"Batch generation failed: {error_msg}")
-        # GenerationService handles retry, so this is likely a final failure for this batch.
-        # We should probably error out the task if chunks fail permanently.
-        # But for now, just log. 
-        pass
+        """Callback when batch generation fails definitively."""
+        logging.error(f"Batch generation failed definitively: {error_msg}")
+        self._handle_task_failure(f"Generation failed: {error_msg}")
 
     def _monitor_completion(self) -> None:
         """Monitors generation completion and triggers final assembly."""
@@ -391,7 +440,7 @@ class ApplicationController(QObject):
             if self._is_stopped:
                 return
 
-            processed, total, _ = self._generation_service.get_progress_info()
+            processed, total, _, _ = self._generation_service.get_progress_info()
             if total > 0 and processed >= total:
                 if self._completion_monitor_timer:
                     self._completion_monitor_timer.stop()
@@ -415,7 +464,7 @@ class ApplicationController(QObject):
             # Start assembly in a background thread to not block UI
             thread = threading.Thread(
                 target=self._execute_assembly_workflow,
-                args=(output_path, task.config.speed),
+                args=(output_path, task.config.speed, str(task.id)),
                 daemon=True
             )
             thread.start()
@@ -424,13 +473,14 @@ class ApplicationController(QObject):
             logging.error(f"Failed to prepare final generation: {e}")
             self.errorOccurred.emit(f"Failed to prepare final generation: {str(e)}")
 
-    def _execute_assembly_workflow(self, output_path: Path, speed: float) -> None:
+    def _execute_assembly_workflow(self, output_path: Path, speed: float, correlation_id: str) -> None:
         """Core assembly workflow executed in a separate thread."""
         try:
             self._assembly_service.assemble_final(
                 output_path, 
                 self._audio_files, 
-                speed
+                speed,
+                correlation_id
             )
             self._cleanup_temp_files()
             self._mark_task_completed()
@@ -458,16 +508,15 @@ class ApplicationController(QObject):
             logging.info("Generation resumed")
 
     def stop_generation(self) -> None:
-        """Stops the audio generation and cleans up."""
+        """Stops the audio generation for all tasks and cleans up."""
         self._is_stopped = True
-        logging.info("Stopping generation...")
-
-        self._queue_service.update_task_status(TaskStatus.STOPPED, "Stopped by user")
+        logging.info("Stopping all generation tasks...")
 
         self. _terminate_prep_worker()
         self._generation_service.stop()
         self._assembly_service.stop()
         
+        self._queue_service.clear_all_tasks()
         self._cleanup_temp_files()
         self._finalize_task()
 
@@ -525,7 +574,7 @@ class ApplicationController(QObject):
 
     def _prepare_output_path(self, task: GenerationTask) -> Path:
         """Prepares the output directory and returns the final MP3 path."""
-        base_output_dir = Path(task.config.output_dir_path)
+        base_output_dir = Path(task.config.output_dir_path).expanduser()
         final_dir = base_output_dir / "final"
         self._file_manager.ensure_directory_exists(str(final_dir))
 

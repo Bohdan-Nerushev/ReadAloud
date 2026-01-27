@@ -63,7 +63,8 @@ class ProgressDisplayWidget(QWidget):
             self,
             completed: int,
             total: int,
-            eta: str
+            eta: str,
+            speed: float = 0.0
     ) -> None:
         """
         Updates the progress display.
@@ -72,6 +73,7 @@ class ProgressDisplayWidget(QWidget):
             completed: Number of completed chunks
             total: Total number of chunks
             eta: Estimated time to completion (formatted string)
+            speed: Current processing speed in chunks/second
         """
         if total > 0:
             percentage = int(
@@ -79,7 +81,7 @@ class ProgressDisplayWidget(QWidget):
             )
             self._progress_bar.setValue(percentage)
         
-        status_text = f"Progress: {completed}/{total} completed    |    ETA: {eta}"
+        status_text = f"Progress: {completed}/{total} completed    |    Speed: {speed:.1f} ch/s    |    ETA: {eta}"
         self._status_label.setText(status_text)
     
     def reset(

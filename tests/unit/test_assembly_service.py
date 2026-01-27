@@ -33,6 +33,9 @@ class TestAssemblyService(unittest.TestCase):
         self.service.reset(total_chunks=110)
         
         # 1. Fill some files but not enough for a full batch
+        for i in range(40):
+            self.service.mark_chunk_ready(i, duration=1.0)
+            
         available_files = [f"file_{i}.mp3" for i in range(40)] + [None] * 70
         self.service.check_and_submit_batches(available_files, "/mock/out", 1.0)
         
@@ -40,8 +43,11 @@ class TestAssemblyService(unittest.TestCase):
         self.assertEqual(len(self.service._batch_submitted), 0)
         
         # 2. Fill first batch (50 files)
-        available_files = [f"file_{i}.mp3" for i in range(50)] + [None] * 60
-        self.service.check_and_submit_batches(available_files, "/mock/out", 1.0)
+        for i in range(40, 50):
+             batch_idx = self.service.mark_chunk_ready(i, duration=1.0)
+             if batch_idx is not None:
+                 available_files = [f"file_{k}.mp3" for k in range(50)] + [None] * 60
+                 self.service.submit_batch_by_index(batch_idx, available_files[:50], "/mock/out", 1.0, "test-id")
         
         # Verify 1 batch submitted
         self.assertEqual(len(self.service._batch_submitted), 1)
@@ -54,7 +60,7 @@ class TestAssemblyService(unittest.TestCase):
         
         with patch.object(self.service, '_assemble_fast') as mock_fast, \
              patch.object(self.service, '_assemble_full') as mock_full:
-            self.service.assemble_final(Path("out.mp3"), [], 1.0)
+            self.service.assemble_final(Path("out.mp3"), [], 1.0, "test-id")
             mock_fast.assert_called_once()
             mock_full.assert_not_called()
 
@@ -64,7 +70,7 @@ class TestAssemblyService(unittest.TestCase):
         
         with patch.object(self.service, '_assemble_fast') as mock_fast, \
              patch.object(self.service, '_assemble_full') as mock_full:
-            self.service.assemble_final(Path("out.mp3"), ["chunk1.mp3", "chunk2.mp3"], 1.5)
+            self.service.assemble_final(Path("out.mp3"), ["chunk1.mp3", "chunk2.mp3"], 1.5, "test-id")
             mock_fast.assert_not_called()
             mock_full.assert_called_once()
 
@@ -82,7 +88,7 @@ class TestAssemblyService(unittest.TestCase):
             mock_p1.exists.return_value = True
             
             # Run final assembly
-            self.service.assemble_final(Path("out.mp3"), [], 1.0)
+            self.service.assemble_final(Path("out.mp3"), [], 1.0, "test-id")
             
             # Verify unlink was called for both parts
             mock_p0.unlink.assert_called_once()

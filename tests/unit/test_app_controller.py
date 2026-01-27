@@ -66,8 +66,8 @@ class TestAppController(unittest.TestCase):
             self.task_1.status = status
         self.queue_service.update_task_status.side_effect = mock_update_status
 
-        # Mock GenerationService.get_progress_info to return expected 3-tuple
-        self.generation_service.get_progress_info.return_value = (0, 0, "...")
+        # Mock GenerationService.get_progress_info to return expected 4-tuple
+        self.generation_service.get_progress_info.return_value = (0, 0, "...", 0.0)
         
         # Initialize controller with mocked services
         self.controller = ApplicationController(

@@ -63,8 +63,8 @@ class TestGenerationService(unittest.TestCase):
         batch = self.chunks[:10]
         self.service._output_dir = "/mock/out"
         
-        # Setup mock retry handler to just return mock paths
-        self.mock_retry_handler.execute_with_retry.return_value = [f"/mock/out/{i}.mp3" for i in range(10)]
+        # Setup mock retry handler to just return mock paths and durations
+        self.mock_retry_handler.execute_with_retry.return_value = [(f"/mock/out/{i}.mp3", 1.5) for i in range(10)]
         
         self.service._generate_batch_safe(batch, "en", "male", "test-id")
         
@@ -88,6 +88,19 @@ class TestGenerationService(unittest.TestCase):
         is_paused = self.service.pause()
         self.assertFalse(is_paused)
         mock_tm.resume.assert_called_once()
+
+    @patch('src.application.services.generation_service.ThreadManager')
+    def test_progress_info_includes_speed(self, mock_thread_manager_class):
+        """test_progress_info_includes_speed: Перевірка повернення швидкості генерації."""
+        self.service.start_generation(self.task, self.chunks, "/mock/out")
+        # Simulate some progress manually
+        self.service._update_internal_progress(success=True)
+        
+        info = self.service.get_progress_info()
+        self.assertEqual(len(info), 4) # (processed, total, eta, speed)
+        self.assertEqual(info[0], 1)
+        self.assertEqual(info[1], 25)
+        self.assertIsInstance(info[3], float)
 
 if __name__ == '__main__':
     unittest.main()

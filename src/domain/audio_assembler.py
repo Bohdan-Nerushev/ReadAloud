@@ -11,7 +11,7 @@ import logging
 import uuid
 import threading
 from pathlib import Path
-from typing import Set, List
+from typing import Set, List, Optional
 
 
 
@@ -51,7 +51,8 @@ class AudioAssembler:
             output_path: str,
             speed: float = 1.0,
             callback: callable = None,
-            copy_codec: bool = False
+            copy_codec: bool = False,
+            durations: Optional[List[float]] = None
     ) -> None:
         """
         Concatenates multiple audio files into a single MP3 file using ffmpeg.
@@ -67,7 +68,7 @@ class AudioAssembler:
         
         try:
             # 1. Calculate total duration
-            total_duration = self._calculate_total_duration(audio_files)
+            total_duration = self._calculate_total_duration(audio_files, durations)
 
             # 2. Create file list
             self._create_concat_list(audio_files, list_path)
@@ -88,7 +89,10 @@ class AudioAssembler:
                 except Exception:
                     pass
 
-    def _calculate_total_duration(self, audio_files: List[str]) -> float:
+    def _calculate_total_duration(self, audio_files: List[str], durations: Optional[List[float]] = None) -> float:
+        if durations and len(durations) == len(audio_files):
+            return sum(d for d in durations if d is not None)
+            
         total = 0.0
         for path in audio_files:
             try:

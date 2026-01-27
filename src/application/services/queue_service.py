@@ -125,6 +125,14 @@ class QueueService:
                 return True
         return False
 
+    def clear_all_tasks(self) -> None:
+        """Removes all tasks and notifies about status change."""
+        self._task_queue.clear()
+        self._current_task = None
+        logging.info("All tasks cleared from queue.")
+        for callback in self._on_status_changed_callbacks:
+            callback(False)
+
     def get_all_tasks(self) -> List[GenerationTask]:
         """Returns all tasks including current and pending."""
         tasks = []

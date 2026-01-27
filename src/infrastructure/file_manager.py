@@ -27,8 +27,8 @@ class FileManager:
 
     @lru_cache(maxsize=128)
     def _get_path(self, path_str: str) -> Path:
-        """Cached conversion of string to Path object."""
-        return Path(path_str)
+        """Cached conversion of string to absolute Path object with expanded tildes."""
+        return Path(path_str).expanduser().resolve()
     
     def create_timestamped_dir(
             self,

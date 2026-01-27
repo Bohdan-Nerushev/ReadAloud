@@ -80,8 +80,8 @@ class TestConcurrency(unittest.TestCase):
         mock_gen_service = MagicMock()
         mock_asm_service = MagicMock()
         
-        # Mock get_progress_info to return expected 3-tuple
-        mock_gen_service.get_progress_info.return_value = (0, 0, "00:00:00")
+        # Mock get_progress_info to return expected 4-tuple
+        mock_gen_service.get_progress_info.return_value = (0, 0, "00:00:00", 0.0)
         mock_gen_service.get_progress_percentage.return_value = 0.0
         
         controller = ApplicationController(

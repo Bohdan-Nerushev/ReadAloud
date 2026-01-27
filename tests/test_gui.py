@@ -56,6 +56,10 @@ class TestGUI(unittest.TestCase):
         self.mock_window.project_input.get_project_name.return_value = "ValidName"
         self.mock_window.file_selector.get_selected_file.return_value = "/non/existent/file.txt"
         self.mock_window.output_selector.get_selected_directory.return_value = "/mock/out"
+        self.mock_window.language_selector.get_selected_language.return_value = "en"
+        self.mock_window.gender_selector.get_selected_gender.return_value = "male"
+        self.mock_window.speed_selector.get_selected_speed.return_value = 1.0
+        self.mock_window.thread_selector.get_thread_count.return_value = 1
         
         with patch('src.domain.models.Path') as mock_path:
             mock_path.return_value.exists.return_value = False
@@ -89,6 +93,13 @@ class TestGUI(unittest.TestCase):
         # 4. Test queue status changed to idle
         self.app._on_queue_status_changed(False)
         self.mock_window.control_buttons.set_idle_state.assert_called_once()
+
+    def test_task_deletion_calls_controller(self):
+        """test_task_deletion_calls_controller: Перевірка виклику контролера при видаленні завдання."""
+        task_id = "test-uuid"
+        self.app._on_task_delete_requested(task_id)
+        self.mock_controller.cancel_task.assert_called_once_with(task_id)
+        self.mock_window.queue_list.remove_task.assert_called_once_with(task_id)
 
 if __name__ == '__main__':
     unittest.main()

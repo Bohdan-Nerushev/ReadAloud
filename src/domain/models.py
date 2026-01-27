@@ -53,7 +53,7 @@ class ProjectConfig:
 
         input_path = Path(
             self.input_file_path
-        )
+        ).expanduser()
         if not input_path.exists():
             raise ConfigurationException(
                 f"Input file does not exist: {self.input_file_path}"
@@ -112,6 +112,7 @@ class AudioChunk:
     text_content: str
     text_file_path: Optional[str] = None
     audio_file_path: Optional[str] = None
+    duration: Optional[float] = None
 
     def __post_init__(
             self
@@ -149,27 +150,31 @@ class AudioChunk:
             chunk_number=self.chunk_number,
             text_content=self.text_content,
             text_file_path=path,
-            audio_file_path=self.audio_file_path
+            audio_file_path=self.audio_file_path,
+            duration=self.duration
         )
     
     def with_audio_path(
             self,
-            path: str
+            path: str,
+            duration: Optional[float] = None
     ) -> 'AudioChunk':
         """
-        Creates a new AudioChunk with the specified audio file path.
+        Creates a new AudioChunk with the specified audio file path and duration.
         
         Args:
             path: Path to the saved audio file
+            duration: Duration of the audio file in seconds
             
         Returns:
-            New AudioChunk instance with updated audio_file_path
+            New AudioChunk instance with updated audio_file_path and duration
         """
         return AudioChunk(
             chunk_number=self.chunk_number,
             text_content=self.text_content,
             text_file_path=self.text_file_path,
-            audio_file_path=path
+            audio_file_path=path,
+            duration=duration if duration is not None else self.duration
         )
 
 

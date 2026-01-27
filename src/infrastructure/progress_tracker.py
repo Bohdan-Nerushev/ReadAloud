@@ -38,14 +38,31 @@ class ProgressTracker:
         self._completed_chunks: int = 0
         self._failed_chunks: int = 0
         self._start_time: Optional[datetime] = None
+        self._pause_start_time: Optional[datetime] = None
+        self._total_paused_duration: timedelta = timedelta()
+        self._recent_timings: List[datetime] = []
+        self._max_recent_timings = 30
         self._lock: threading.Lock = threading.Lock()
     
-    def start(
-            self
-    ) -> None:
+    def start(self) -> None:
         """Records the start time for progress tracking."""
         with self._lock:
             self._start_time = datetime.now()
+            self._total_paused_duration = timedelta()
+            self._recent_timings = []
+
+    def pause(self) -> None:
+        """Records the start of a pause period."""
+        with self._lock:
+            if self._pause_start_time is None:
+                self._pause_start_time = datetime.now()
+
+    def resume(self) -> None:
+        """Records the end of a pause period."""
+        with self._lock:
+            if self._pause_start_time is not None:
+                self._total_paused_duration += (datetime.now() - self._pause_start_time)
+                self._pause_start_time = None
     
     def update_progress(
             self,
@@ -62,6 +79,11 @@ class ProgressTracker:
                 self._completed_chunks += 1
             else:
                 self._failed_chunks += 1
+            
+            # Record timing for windowed average
+            self._recent_timings.append(datetime.now())
+            if len(self._recent_timings) > self._max_recent_timings:
+                self._recent_timings.pop(0)
     
     def get_progress_percentage(
             self
@@ -107,7 +129,7 @@ class ProgressTracker:
         """
         Estimates when the processing will complete.
         
-        Calculates based on the average time per chunk and remaining chunks.
+        Calculates based on the windowed average time per chunk.
         
         Returns:
             Estimated completion datetime, or None if estimation is not possible
@@ -117,13 +139,50 @@ class ProgressTracker:
             if self._start_time is None or processed_count == 0:
                 return None
             
-            elapsed_time = datetime.now() - self._start_time
-            average_time_per_chunk = elapsed_time / processed_count
+            # Use windowed average if we have enough data, otherwise global average
+            if len(self._recent_timings) >= 2:
+                # Average speed over the window
+                window_duration = self._recent_timings[-1] - self._recent_timings[0]
+                # If window duration is zero (too fast), fallback to global
+                if window_duration.total_seconds() > 0:
+                    average_time_per_chunk = window_duration / (len(self._recent_timings) - 1)
+                else:
+                    average_time_per_chunk = self._calculate_global_average()
+            else:
+                average_time_per_chunk = self._calculate_global_average()
             
             remaining_chunks = self._total_chunks - processed_count
             estimated_remaining_time = average_time_per_chunk * remaining_chunks
             
             return datetime.now() + estimated_remaining_time
+
+    def _calculate_global_average(self) -> timedelta:
+        """Calculates average time per chunk since start, excluding pause time."""
+        processed_count = self._completed_chunks + self._failed_chunks
+        if processed_count == 0:
+            return timedelta()
+            
+        now = datetime.now()
+        elapsed_running = now - self._start_time - self._total_paused_duration
+        if self._pause_start_time:
+             # Currently paused, don't include current pause time
+             elapsed_running -= (now - self._pause_start_time)
+             
+        # Guard against negative or zero (can happen with clock adjustments)
+        seconds = max(0.1, elapsed_running.total_seconds())
+        return timedelta(seconds=seconds / processed_count)
+
+    def get_chunks_per_second(self) -> float:
+        """Returns the current processing speed."""
+        with self._lock:
+            if not self._recent_timings or len(self._recent_timings) < 2:
+                return 0.0
+            
+            window_duration = self._recent_timings[-1] - self._recent_timings[0]
+            if window_duration.total_seconds() <= 0:
+                return 0.0
+                
+            return (len(self._recent_timings) - 1) / window_duration.total_seconds()
     
     def get_eta_string(
             self

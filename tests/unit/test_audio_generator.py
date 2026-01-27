@@ -60,9 +60,9 @@ class TestAudioGenerator(unittest.TestCase):
         results = self.generator.generate_audio_batch([chunk1, chunk2], "uk", "female", "/tmp")
         
         self.assertEqual(len(results), 2)
-        self.assertTrue(results[0].endswith("1.mp3"))
-        self.assertTrue(results[1].endswith("2.mp3"))
-        self.assertTrue(Path(results[0]).is_absolute())
+        self.assertTrue(results[0][0].endswith("1.mp3"))
+        self.assertTrue(results[1][0].endswith("2.mp3"))
+        self.assertTrue(Path(results[0][0]).is_absolute())
 
     def test_generate_audio_batch_unsupported_lang(self):
         """test_generate_audio_batch_unsupported_lang: Перевіряє викидання ValueError для непідтримуваної мови."""
