@@ -82,6 +82,7 @@ class AssemblyService(QObject):
             self._batch_submitted.add(batch_index)
 
         part_path = Path(output_dir) / f"part_{batch_index}.mp3"
+        logging.info(f"Submitting batch {batch_index} for assembly ({len(files)} files)")
 
         def _assemble_task():
             try:
@@ -145,10 +146,19 @@ class AssemblyService(QObject):
                 # Fallback to assembling all raw files
                 valid_files = [f for f in all_chunk_files if f is not None]
                 if not valid_files:
-                     raise Exception("No valid audio files to assemble")
+                    raise Exception("No valid audio files to assemble")
                 self._assemble_full(valid_files, output_path, speed)
-        except Exception as e:
-            raise e
+        finally:
+            # Cleanup temporary part files
+            if parts:
+                for part in parts:
+                    try:
+                        p = Path(part)
+                        if p.exists():
+                            p.unlink()
+                            logging.debug(f"Deleted temporary part: {part}")
+                    except Exception as e:
+                        logging.warning(f"Failed to delete temporary part {part}: {e}")
 
         # Reinstate executor for next run
         self._executor = ThreadPoolExecutor(max_workers=2)

@@ -65,6 +65,12 @@ sudo pacman -S ffmpeg libxcb-cursor
 ./start.sh
 ```
 
+### Running Tests
+To execute the comprehensive test suite (unit, integration, concurrency, and UI tests):
+```bash
+./run_tests.sh
+```
+
 ### Configuration Parameters
 1. **Project Name**: Unique identifier (used for the final filename).
 2. **Input File**: Select any `.txt` file containing UTF-8 encoded text.

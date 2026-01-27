@@ -17,6 +17,8 @@ class ControlButtonsWidget(QWidget):
     """
     
     startClicked = pyqtSignal()
+    pauseClicked = pyqtSignal()
+    stopClicked = pyqtSignal()
     
     def __init__(
             self,
@@ -37,11 +39,24 @@ class ControlButtonsWidget(QWidget):
         """Sets up the user interface components."""
         layout = QHBoxLayout()
         layout.setSpacing(Styles.SPACING_MEDIUM)
+        layout.setContentsMargins(0, 0, 0, 0)
         
         self._start_button = QPushButton("Add to Queue")
         self._start_button.setStyleSheet(Styles.BUTTON_START)
         self._start_button.clicked.connect(self._on_start_clicked)
         layout.addWidget(self._start_button)
+        
+        self._pause_button = QPushButton("Pause Generation")
+        self._pause_button.setStyleSheet(Styles.BUTTON_PAUSE)
+        self._pause_button.clicked.connect(self.pauseClicked.emit)
+        self._pause_button.setEnabled(False)
+        layout.addWidget(self._pause_button)
+        
+        self._stop_button = QPushButton("Stop Generation")
+        self._stop_button.setStyleSheet(Styles.BUTTON_STOP)
+        self._stop_button.clicked.connect(self.stopClicked.emit)
+        self._stop_button.setEnabled(False)
+        layout.addWidget(self._stop_button)
         
         layout.addStretch()
         
@@ -58,22 +73,32 @@ class ControlButtonsWidget(QWidget):
     ) -> None:
         """Sets buttons to idle state."""
         self._start_button.setEnabled(True)
-        self._start_button.show()
+        self._pause_button.setEnabled(False)
+        self._pause_button.setText("Pause Generation")
+        self._stop_button.setEnabled(False)
     
     def set_running_state(
             self
     ) -> None:
         """Sets buttons to running state."""
         self._start_button.setEnabled(True)
+        self._pause_button.setEnabled(True)
+        self._pause_button.setText("Pause Generation")
+        self._stop_button.setEnabled(True)
     
     def set_paused_state(
             self
     ) -> None:
         """Sets buttons to paused state."""
-        pass
+        self._start_button.setEnabled(True)
+        self._pause_button.setEnabled(True)
+        self._pause_button.setText("Resume Generation")
+        self._stop_button.setEnabled(True)
     
     def disable_all(
             self
     ) -> None:
         """Disables all buttons."""
         self._start_button.setEnabled(False)
+        self._pause_button.setEnabled(False)
+        self._stop_button.setEnabled(False)

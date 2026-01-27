@@ -43,17 +43,16 @@ def setup_logging(log_dir: str = "logs") -> None:
         
         log_file = log_path / "app.log"
         
-        # Determine log level from environment or default to INFO
-        # This allows changing level without code changes via export LOG_LEVEL=DEBUG
-        env_level = os.getenv("LOG_LEVEL", "INFO").upper()
-        level = getattr(logging, env_level, logging.INFO)
+        # Determine log level from environment or default to DEBUG
+        env_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
+        level = getattr(logging, env_level, logging.DEBUG)
         
         # Structured machine-readable format with Correlation ID
         file_formatter = logging.Formatter(
             '%(asctime)s [%(correlation_id)s] [%(levelname)s] %(name)s: %(message)s'
         )
         console_formatter = logging.Formatter(
-            '[%(correlation_id)s] %(levelname)s: %(message)s'
+            '%(asctime)s [%(correlation_id)s] %(levelname)s: %(message)s'
         )
         
         # File Handler (Rotating)

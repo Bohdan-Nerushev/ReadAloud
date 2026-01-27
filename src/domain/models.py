@@ -204,7 +204,20 @@ class GenerationTask:
             status: TaskStatus,
             message: str = ""
     ) -> None:
-        """Updates task status and message."""
+        """
+        Updates task status and message.
+        
+        Allowed transitions:
+        - PENDING -> PROCESSING, STOPPED, FAILED
+        - PROCESSING -> COMPLETED, STOPPED, FAILED, PAUSED
+        - PAUSED -> PROCESSING, STOPPED, FAILED
+        - STOPPED -> PROCESSING (re-entry)
+        - FAILED -> PROCESSING (re-entry)
+        - COMPLETED -> None (terminal state)
+        """
+        if self.status == TaskStatus.COMPLETED:
+            raise ValueError(f"Cannot change state from COMPLETED to {status}")
+
         self.status = status
         if message:
             self.message = message

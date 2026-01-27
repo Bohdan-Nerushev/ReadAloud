@@ -121,6 +121,7 @@ class GenerationService(QObject):
             for i, chunk in enumerate(batch):
                 if self._is_stopped: 
                     break
+                logging.debug(f"Chunk {chunk.chunk_number} generated: {audio_paths[i]}")
                 self.chunkGenerated.emit(chunk.chunk_number, audio_paths[i])
                 self._update_internal_progress(success=True)
 

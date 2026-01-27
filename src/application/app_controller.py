@@ -266,6 +266,7 @@ class ApplicationController(QObject):
             # Reset assembly service
             self._assembly_service.reset(len(chunks))
 
+            logging.info(f"Preparation finished for task {self._get_current_task().id if self._get_current_task() else 'unknown'}. Chunks: {len(chunks)}")
             self._start_generation_process()
         except Exception as e:
             logging.error(f"Error after preparation: {e}", exc_info=True)
@@ -407,7 +408,7 @@ class ApplicationController(QObject):
         if not task:
             return
 
-        logging.info("Finalizing generation...")
+        logging.info("Finalizing generation. Starting final assembly...")
         try:
             output_path = self._prepare_output_path(task)
             

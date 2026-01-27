@@ -20,7 +20,7 @@ from src.infrastructure.ioc import Container
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.gui.main_window import MainWindow
 from src.application.app_controller import ApplicationController
-from src.domain.models import ProjectConfig, TaskStatus
+from src.domain.models import ProjectConfig, TaskStatus, GenerationTask
 from src.domain.exceptions import ConfigurationException
 
 
@@ -44,6 +44,8 @@ class ReadAloudApplication:
     ) -> None:
         """Sets up signals and slots."""
         self._window.control_buttons.startClicked.connect(self._on_start_clicked)
+        self._window.control_buttons.pauseClicked.connect(self._controller.pause_generation)
+        self._window.control_buttons.stopClicked.connect(self._controller.stop_generation)
 
         self._controller.progressUpdated.connect(self._on_progress_updated)
         self._controller.assemblyProgressUpdated.connect(self._on_assembly_progress_updated)
@@ -144,7 +146,7 @@ class ReadAloudApplication:
     
     def _on_task_updated(
             self,
-            task
+            task: GenerationTask
     ) -> None:
         """
         Handles task updates and removes completed tasks.
@@ -152,6 +154,16 @@ class ReadAloudApplication:
         Args:
             task: Updated task
         """
+        # Update control buttons based on current task status
+        if task.status == TaskStatus.PROCESSING:
+            self._window.control_buttons.set_running_state()
+        elif task.status == TaskStatus.PAUSED:
+            self._window.control_buttons.set_paused_state()
+        elif task.status in [TaskStatus.COMPLETED, TaskStatus.STOPPED, TaskStatus.FAILED]:
+            # These are handled by _on_queue_status_changed(False) usually, 
+            # but we ensure idle state if this task was the last one.
+            pass
+
         # Auto-remove completed tasks after a delay
         if task.status == TaskStatus.COMPLETED:
             # Remove from UI after task is done
