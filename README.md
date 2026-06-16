@@ -39,21 +39,35 @@ sudo dnf install ffmpeg libxcb-cursor
 sudo pacman -S ffmpeg libxcb-cursor
 ```
 
-## 📦 Installation
+## 📦 Installation & Setup
+
+You can install the application automatically using the provided installation script, which sets up the virtual environment, installs dependencies, and creates a desktop shortcut:
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://git.mam.dev/bnerushev/readaloud.git
    cd ReadAloud
    ```
 
-2. **Set up virtual environment (recommended)**:
+2. **Run the installation script**:
+   ```bash
+   chmod +x install.sh
+   ./install.sh
+   ```
+
+*Note: The script will create a desktop shortcut `readaloud.desktop` on your Desktop directory (e.g., `~/Desktop` or `~/Schreibtisch` depending on your system locale). In modern Linux desktop environments, you may need to right-click the shortcut on your desktop and select **"Allow Launching"** to trust and enable it.*
+
+### Manual Installation (Alternative)
+
+If you prefer to install manually:
+
+1. **Set up virtual environment**:
    ```bash
    python -m venv venv
    source venv/bin/activate
    ```
 
-3. **Install dependencies**:
+2. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
