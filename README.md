@@ -105,3 +105,31 @@ To execute the comprehensive test suite (unit, integration, concurrency, and UI 
    - **Gender**: Switch between available voice models.
    - **Speed**: Fine-tune the speech pace (1.0 is standard).
 4. **Threads**: Set concurrency level (1-40). Higher values speed up large files but require stable internet.
+
+## 📊 Ingestion & Monitoring (ELK Stack)
+
+The application supports structured logging and real-time visualization using the ELK Stack (Elasticsearch, Logstash, Kibana).
+
+### Starting the Logging Infrastructure
+Ensure you have Docker and Docker Compose installed, then start the services from the project root:
+```bash
+docker compose up -d
+```
+
+### Accessing the Services
+Once the containers are up, the services can be accessed at the following endpoints:
+
+- **Elasticsearch API**: [http://localhost:9200](http://localhost:9200) (Check cluster health and raw indices)
+- **Kibana Web Interface**: [http://localhost:5601](http://localhost:5601) (Visualize and search logs)
+- **Logstash API**: [http://localhost:9600](http://localhost:9600) (Monitor pipeline performance)
+
+### Analyzing Logs in Kibana
+1. Open **Kibana** at [http://localhost:5601](http://localhost:5601).
+2. Navigate to **Management** -> **Kibana** -> **Data Views** (or **Index Patterns**).
+3. Create a new Data View with the index pattern `app-logs-*` and set `@timestamp` as the primary time field.
+4. Go to the **Discover** tab to search and filter logs by structured fields like `correlation_id`, `loglevel`, `logger`, and `log_message`.
+
+### Stopping the Logging Infrastructure
+```bash
+docker compose down 
+```

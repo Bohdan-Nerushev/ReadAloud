@@ -1,0 +1,102 @@
+version: "3.8"
+
+services:
+  logstash:
+    image: docker.elastic.co/logstash/logstash:9.4.2
+    container_name: logstash
+    environment:
+      LS_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./logs:/usr/share/logstash/logs:ro
+      - logstash_data:/usr/share/logstash/data
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    depends_on:
+      - elasticsearch
+    ports:
+      - "9600:9600"
+    networks:
+      - elk
+  
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.2
+    container_name: elasticsearch
+    environment:
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+    volumes:
+      - elastic_data:/usr/share/elasticsearch/data
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - elk
+
+  elasticsearch-setup:
+    image: curlimages/curl:8.7.1
+    container_name: elasticsearch-setup
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo 'Waiting for Elasticsearch...'
+        until curl -s -f http://elasticsearch:9200 >/dev/null; do
+          sleep 2
+        done
+        echo 'Elasticsearch is ready. Setting template...'
+        curl -s -X PUT "http://elasticsearch:9200/_index_template/app-logs-template" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "index_patterns": ["app-logs-*"],
+            "template": {
+              "mappings": {
+                "properties": {
+                  "@timestamp": { "type": "date" },
+                  "correlation_id": { "type": "keyword" },
+                  "loglevel": { "type": "keyword" },
+                  "logger": { "type": "keyword" },
+                  "api_status_code": { "type": "keyword" },
+                  "api_error_message": { "type": "text" },
+                  "api_url": { "type": "keyword" },
+                  "log_message": { "type": "text" }
+                }
+              }
+            }
+          }'
+        echo 'Template set successfully!'
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.4.2
+    container_name: kibana
+    environment:
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+      NODE_OPTIONS: "--max-old-space-size=1024"
+    deploy:
+      resources:
+        limits:
+          memory: 1.5g
+    depends_on:
+      - elasticsearch
+    ports:
+      - "5601:5601"
+    networks:
+      - elk
+
+volumes:
+  elastic_data:
+  logstash_data:
+
+networks:
+  elk:
