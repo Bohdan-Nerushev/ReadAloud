@@ -47,12 +47,14 @@ You can install the application automatically in one command using the remote in
 
 **Using wget:**
 ```bash
-wget -qO- https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh | bash
+wget -O install.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh?ref_type=heads"
+bash install.sh
 ```
 
 **Using curl:**
 ```bash
-curl -sSL https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh | bash
+curl -sSL -o install.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh?ref_type=heads"
+bash install.sh
 ```
 
 *Note: The installation directory will be created at `./ReadAloud` relative to the directory where the command was executed. The desktop shortcut will be generated on your Desktop (e.g., `~/Desktop` or `~/Schreibtisch`). You may need to right-click the shortcut on your desktop and select **"Allow Launching"** to trust and enable it.*
