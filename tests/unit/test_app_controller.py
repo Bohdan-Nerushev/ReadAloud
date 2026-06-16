@@ -124,5 +124,11 @@ class TestAppController(unittest.TestCase):
             self.assertEqual(self.task_1.status, TaskStatus.FAILED)
             self.queue_service.update_task_status.assert_called_with(TaskStatus.FAILED, "Failed")
 
+    def test_initialize_task_state_emits_correct_signal(self):
+        """test_initialize_task_state_emits_correct_signal: Перевіряє, що сигнал progressUpdated випромінюється з 4 аргументами."""
+        # Use a real signal behavior mock if possible or just check emit call
+        self.controller._initialize_task_state(self.task_1)
+        self.controller.progressUpdated.emit.assert_called_with(0, 0, "Preparing...", 0.0)
+
 if __name__ == '__main__':
     unittest.main()

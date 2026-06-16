@@ -110,3 +110,6 @@ src/
 ## 📄 License
 
 This project is developed for enterprise-level demonstration and personal use. All rights reserved.
+
+
+python3 analyze_logs.py --start "2026-04-03 20:30:00" --end "2026-04-04 02:26:18"

@@ -270,7 +270,7 @@ class ApplicationController(QObject):
         self._text_dir = None
         self._audio_dir = None
 
-        self.progressUpdated.emit(0, 0, "Preparing...")
+        self.progressUpdated.emit(0, 0, "Preparing...", 0.0)
 
     def _start_preparation_worker(self, task: GenerationTask) -> None:
         """Starts the preparation worker thread."""

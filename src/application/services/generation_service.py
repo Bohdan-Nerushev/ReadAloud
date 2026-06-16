@@ -18,7 +18,7 @@ class GenerationService(QObject):
     """
     
     # Signals to communicate with Controller/UI
-    progressUpdated = pyqtSignal(int, int, str)  # processed, total, eta
+    progressUpdated = pyqtSignal(int, int, str, float)  # processed, total, eta, speed
     chunkGenerated = pyqtSignal(int, str, float) # chunk_number, file_path, duration
     batchGenerated = pyqtSignal(list)             # list of (chunk_number, file_path, duration)
     batchFailed = pyqtSignal(list, str)          # list of chunks, error message
