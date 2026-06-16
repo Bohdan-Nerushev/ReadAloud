@@ -34,12 +34,14 @@ fi
 
 # 2. Clone or update repository
 if [ -d "$INSTALL_DIR/.git" ]; then
-    echo "Repository already exists at $INSTALL_DIR. Updating codebase..."
+    echo "Repository already exists at $INSTALL_DIR. Updating to the latest master branch version..."
     cd "$INSTALL_DIR" || exit 1
-    git -c http.sslVerify=false pull
+    git -c http.sslVerify=false fetch origin master
+    git -c http.sslVerify=false checkout master
+    git -c http.sslVerify=false reset --hard origin/master
 else
-    echo "Cloning ReadAloud repository to $INSTALL_DIR..."
-    git -c http.sslVerify=false clone https://git.mam.dev/bnerushev/readaloud.git "$INSTALL_DIR"
+    echo "Cloning ReadAloud repository (master branch) to $INSTALL_DIR..."
+    git -c http.sslVerify=false clone -b master https://git.mam.dev/bnerushev/readaloud.git "$INSTALL_DIR"
     cd "$INSTALL_DIR" || exit 1
 fi
 
