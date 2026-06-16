@@ -7,9 +7,9 @@ A professional-grade desktop application built with Python and PyQt6 for convert
 - **Queue Management**: Add multiple tasks to a processing queue and manage them concurrently.
 - **Next-Gen Synthesis**: Uses Microsoft Edge TTS for superior, human-like voice quality.
 - **Advanced Audio Controls**:
-  - **Speed Regulation**: Adjust playback speed from 0.5x to 2.0x.
+  - **Speed Regulation**: Adjust playback speed from 1x to 2.0x.
   - **Gender Selection**: Choose between Male and Female voices for supported languages.
-  - **Multi-threaded Generation**: High-speed processing with up to 30 concurrent threads.
+  - **Multi-threaded Generation**: High-speed processing with up to 40 concurrent threads.
 - **Smart Text Engine**:
   - Automatic sanitization of special characters.
   - Intelligent text chunking (word-boundary aware).
@@ -22,12 +22,28 @@ A professional-grade desktop application built with Python and PyQt6 for convert
 
 ## 🛠 System Requirements
 
-- **Python**: 3.10 or higher
+- **Python**: 3.12 or higher
 - **FFmpeg**: Essential for audio stream assembly and speed adjustments.
-- **OS**: Linux (tested on Ubuntu/Debian, Fedora, Arch).
+- **OS**: Linux (was tested on Ubuntu).
+
+## 📦 Installation & Setup
+
+You can install the application automatically in one command using the remote installation script (it installs dependencies, clones/updates the repository, sets up the virtual environment, and generates a desktop shortcut):
+
+### One-line Installation
+
+**Using wget:**
+```bash
+wget --no-check-certificate -O install.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh?ref_type=heads"
+bash install.sh
+```
+
+*Note: The installation directory will be created at `./ReadAloud` relative to the directory where the command was executed. The desktop shortcut will be generated on your Desktop (e.g., `~/Desktop` or `~/Schreibtisch`). You may need to right-click the shortcut on your desktop and select **"Allow Launching"** to trust and enable it.*
+
+### Manual Installation (Alternative)
 
 ### Installing System Dependencies
-
+If you prefer to install manually:
 ```bash
 # Ubuntu/Debian
 sudo apt-get update && sudo apt-get install ffmpeg libxcb-cursor0
@@ -38,30 +54,6 @@ sudo dnf install ffmpeg libxcb-cursor
 # Arch Linux
 sudo pacman -S ffmpeg libxcb-cursor
 ```
-
-## 📦 Installation & Setup
-
-You can install the application automatically in one command using the remote installation script (it installs dependencies, clones/updates the repository, sets up the virtual environment, and generates a desktop shortcut):
-
-### One-line Installation
-
-**Using wget:**
-```bash
-wget -O install.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh?ref_type=heads"
-bash install.sh
-```
-
-**Using curl:**
-```bash
-curl -sSL -o install.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh?ref_type=heads"
-bash install.sh
-```
-
-*Note: The installation directory will be created at `./ReadAloud` relative to the directory where the command was executed. The desktop shortcut will be generated on your Desktop (e.g., `~/Desktop` or `~/Schreibtisch`). You may need to right-click the shortcut on your desktop and select **"Allow Launching"** to trust and enable it.*
-
-### Manual Installation (Alternative)
-
-If you prefer to install manually:
 
 1. **Clone the repository**:
    ```bash
@@ -100,38 +92,4 @@ To execute the comprehensive test suite (unit, integration, concurrency, and UI 
    - **Language**: English, Ukrainian, German, Russian.
    - **Gender**: Switch between available voice models.
    - **Speed**: Fine-tune the speech pace (1.0 is standard).
-4. **Threads**: Set concurrency level (1-30). Higher values speed up large files but require stable internet.
-
-## 🏗 Architecture & Design Principles
-
-The project adheres to strict **Senior/Staff Engineer** standards:
-
-- **SOLID Principles**: Each component (Services, Controller, GUI) has a single responsibility.
-- **Service Layer Pattern**: Logic is decoupled from the UI into specialized services (`QueueService`, `GenerationService`, `AssemblyService`).
-- **Domain-Driven Design**: Core logic uses immutable `ProjectConfig` and `AudioChunk` models.
-- **Thread Safety**: Robust GUI interaction using `QThread` and signal/slot mechanisms to prevent race conditions.
-- **Defensive Programming**: Comprehensive validation at system boundaries using Jakarta-style patterns and explicit null safety.
-
-### Project Structure
-```text
-src/
-├── application/       # Orchestration and Service layer
-│   └── services/      # Business logic implementation
-├── domain/            # Models, Exceptions, and core interfaces
-├── infrastructure/    # File I/O, Logging, and technical utilities
-├── gui/               # PyQt6 components and modern styling
-└── main.py            # Application entry point
-```
-
-## 🛡 Stability & Performance
-
-- **Graceful Shutdown**: Prevents zombie `ffmpeg` processes and ensures temporary file cleanup.
-- **Exponential Backoff**: Automatic retry logic for network-dependent TTS calls.
-- **Resource Optimization**: Parallel chunk processing with `ThreadPoolExecutor`.
-
-## 📄 License
-
-This project is developed for enterprise-level demonstration and personal use. All rights reserved.
-
-
-python3 analyze_logs.py --start "2026-04-03 20:30:00" --end "2026-04-04 02:26:18"
+4. **Threads**: Set concurrency level (1-40). Higher values speed up large files but require stable internet.

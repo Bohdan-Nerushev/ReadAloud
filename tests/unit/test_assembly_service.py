@@ -29,25 +29,25 @@ class TestAssemblyService(unittest.TestCase):
 
     def test_batch_completion_tracking(self):
         """test_batch_completion_tracking: Перевірка логіки очікування всіх частин."""
-        # Setup: 110 chunks, BATCH_SIZE=50 -> 3 batches (50, 50, 10)
+        # Setup: 110 chunks, BATCH_SIZE=40 -> 3 batches (40, 40, 30)
         self.service.reset(total_chunks=110)
         
-        # 1. Fill some files but not enough for a full batch
-        for i in range(40):
+        # 1. Fill some files but not enough for a full batch (30 files, batch size is 40)
+        for i in range(30):
             self.service.mark_chunk_ready(i, duration=1.0)
             
-        available_files = [f"file_{i}.mp3" for i in range(40)] + [None] * 70
+        available_files = [f"file_{i}.mp3" for i in range(30)] + [None] * 80
         self.service.check_and_submit_batches(available_files, "/mock/out", 1.0)
         
         # Verify no batches submitted
         self.assertEqual(len(self.service._batch_submitted), 0)
         
-        # 2. Fill first batch (50 files)
-        for i in range(40, 50):
+        # 2. Fill first batch (40 files)
+        for i in range(30, 40):
              batch_idx = self.service.mark_chunk_ready(i, duration=1.0)
              if batch_idx is not None:
-                 available_files = [f"file_{k}.mp3" for k in range(50)] + [None] * 60
-                 self.service.submit_batch_by_index(batch_idx, available_files[:50], "/mock/out", 1.0, "test-id")
+                 available_files = [f"file_{k}.mp3" for k in range(40)] + [None] * 70
+                 self.service.submit_batch_by_index(batch_idx, available_files[:40], "/mock/out", 1.0, "test-id")
         
         # Verify 1 batch submitted
         self.assertEqual(len(self.service._batch_submitted), 1)
@@ -55,7 +55,7 @@ class TestAssemblyService(unittest.TestCase):
     def test_assembly_strategy_selection(self):
         """test_assembly_strategy_selection: Вибір між fast та full стратегіями."""
         # Case 1: All batches ready and speed is 1.0 -> Fast assembly
-        self.service.reset(total_chunks=100) # 2 batches of 50
+        self.service.reset(total_chunks=80) # 2 batches of 40
         self.service._batch_results = {0: "part0.mp3", 1: "part1.mp3"}
         
         with patch.object(self.service, '_assemble_fast') as mock_fast, \
@@ -65,7 +65,7 @@ class TestAssemblyService(unittest.TestCase):
             mock_full.assert_not_called()
 
         # Case 2: Batches not ready or missing -> Full assembly (fallback)
-        self.service.reset(total_chunks=100)
+        self.service.reset(total_chunks=80)
         self.service._batch_results = {0: "part0.mp3"} # missing 1
         
         with patch.object(self.service, '_assemble_fast') as mock_fast, \
@@ -76,7 +76,7 @@ class TestAssemblyService(unittest.TestCase):
 
     def test_cleanup_after_assembly(self):
         """test_cleanup_after_assembly: Перевірка видалення тимчасових файлів part_X.mp3."""
-        self.service.reset(total_chunks=100)
+        self.service.reset(total_chunks=80)
         self.service._batch_results = {0: "/mock/part0.mp3", 1: "/mock/part1.mp3"}
         
         with patch('src.application.services.assembly_service.Path') as mock_path_class:

@@ -106,9 +106,9 @@ class TestQueueService(unittest.TestCase):
         status_mock.assert_called_with(True)
         
         # Update progress triggers updated_mock
-        self.queue_service.update_task_progress(50.0)
+        self.queue_service.update_task_progress(40.0)
         updated_mock.assert_called_once_with(task)
-        self.assertEqual(task.progress, 50.0)
+        self.assertEqual(task.progress, 40.0)
         
         # Update status triggers updated_mock
         updated_mock.reset_mock()

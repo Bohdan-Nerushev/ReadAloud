@@ -26,7 +26,7 @@ class AssemblyService(QObject):
     batchAssemblyFinished = pyqtSignal(int, str)       # batch_index, file_path
     assemblyError = pyqtSignal(str)
     
-    BATCH_SIZE = 50
+    BATCH_SIZE = 40
 
     def __init__(self, audio_assembler: AudioAssembler) -> None:
         """Initialize AssemblyService."""
@@ -95,7 +95,8 @@ class AssemblyService(QObject):
         self, 
         available_files: List[Optional[str]], 
         output_dir: str,
-        speed: float
+        speed: float,
+        correlation_id: str = "legacy-batch"
     ) -> None:
         """
         No longer used for primary polling, but kept for compatibility or 
@@ -121,7 +122,7 @@ class AssemblyService(QObject):
                 
                 # Double check all files are present if we use this method
                 if all(f is not None for f in files):
-                    self.submit_batch_by_index(i, files, output_dir, speed)
+                    self.submit_batch_by_index(i, files, output_dir, speed, correlation_id)
 
     def submit_batch_by_index(self, batch_index: int, files: List[str], output_dir: str, speed: float, correlation_id: str) -> None:
         """Submits a batch assembly task by index using optimized duration info."""

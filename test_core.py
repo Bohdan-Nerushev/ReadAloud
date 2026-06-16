@@ -48,7 +48,7 @@ def test_text_chunking():
     print(f"Number of chunks: {len(chunks)}")
     
     for i, chunk in enumerate(chunks[:3]):
-        print(f"Chunk {chunk.chunk_number}: {len(chunk.text_content)} chars - '{chunk.text_content[:50]}...'")
+        print(f"Chunk {chunk.chunk_number}: {len(chunk.text_content)} chars - '{chunk.text_content[:40]}...'")
     
     assert len(chunks) > 1
     assert all(chunk.chunk_number == i + 1 for i, chunk in enumerate(chunks))

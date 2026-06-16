@@ -76,9 +76,9 @@ class ProjectConfig:
                 f"Gender must be one of {allowed_genders}, got: {self.gender}"
             )
 
-        if not 1 <= self.thread_count <= 50:
+        if not 1 <= self.thread_count <= 40:
             raise ConfigurationException(
-                f"Thread count must be between 1 and 50, got: {self.thread_count}"
+                f"Thread count must be between 1 and 40, got: {self.thread_count}"
             )
 
         if not 0.5 <= self.speed <= 2.0:

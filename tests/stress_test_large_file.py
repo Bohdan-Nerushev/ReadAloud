@@ -35,9 +35,10 @@ class TestLargeFilePerformance(unittest.TestCase):
                 # Simulate controller submitting batch
                 self.service.submit_batch_by_index(
                     batch_idx, 
-                    [f"file_{k}.mp3" for k in range(i-49, i+1)], 
+                    [f"file_{k}.mp3" for k in range(i-39, i+1)], 
                     "/tmp", 
-                    1.0
+                    1.0,
+                    "stress-test"
                 )
         
         # Wait for all background assembly tasks to finish
@@ -52,23 +53,23 @@ class TestLargeFilePerformance(unittest.TestCase):
         # would be 540,800 operations per call, and we call it 5200 times.
         # With O(1) it should be very fast (< 0.5s even on slow systems).
         self.assertLess(elapsed, 1.0, f"Performance too slow: {elapsed}s")
-        self.assertEqual(len(ready_batches), 5200 // 50)
-        self.assertEqual(self.mock_assembler.assemble_audio.call_count, 104)
+        self.assertEqual(len(ready_batches), 5200 // 40)
+        self.assertEqual(self.mock_assembler.assemble_audio.call_count, 130)
 
     def test_duration_caching_benefit(self):
         """
         Ensure that durations are passed to AudioAssembler, avoiding ffprobe.
         """
         # Mark first batch as ready
-        for i in range(50):
+        for i in range(40):
             self.service.mark_chunk_ready(i, duration=2.0)
             
-        self.service.submit_batch_by_index(0, ["f.mp3"]*50, "/tmp", 1.0)
+        self.service.submit_batch_by_index(0, ["f.mp3"]*40, "/tmp", 1.0, "stress-test")
         
         # Check if assemble_audio was called with durations
         args, kwargs = self.mock_assembler.assemble_audio.call_args
         self.assertIn('durations', kwargs)
-        self.assertEqual(len(kwargs['durations']), 50)
+        self.assertEqual(len(kwargs['durations']), 40)
         self.assertEqual(kwargs['durations'][0], 2.0)
 
 if __name__ == '__main__':

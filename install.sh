@@ -36,10 +36,10 @@ fi
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo "Repository already exists at $INSTALL_DIR. Updating codebase..."
     cd "$INSTALL_DIR" || exit 1
-    git pull
+    git -c http.sslVerify=false pull
 else
     echo "Cloning ReadAloud repository to $INSTALL_DIR..."
-    git clone https://git.mam.dev/bnerushev/readaloud.git "$INSTALL_DIR"
+    git -c http.sslVerify=false clone https://git.mam.dev/bnerushev/readaloud.git "$INSTALL_DIR"
     cd "$INSTALL_DIR" || exit 1
 fi
 
