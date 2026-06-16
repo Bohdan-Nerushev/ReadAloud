@@ -72,6 +72,18 @@ sudo pacman -S ffmpeg libxcb-cursor
    pip install -r requirements.txt
    ```
 
+### Uninstallation
+
+If you wish to uninstall ReadAloud, you can download and run the remote uninstallation script in one command:
+
+**Using wget:**
+```bash
+wget --no-check-certificate -O uninstall.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/uninstall.sh?ref_type=heads"
+bash uninstall.sh
+```
+
+This will automatically clean up the program files, remove the desktop shortcut, and unregister the application from your system menu.
+
 ## 🖥 Usage
 
 ### Starting the Application
