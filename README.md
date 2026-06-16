@@ -41,7 +41,25 @@ sudo pacman -S ffmpeg libxcb-cursor
 
 ## 📦 Installation & Setup
 
-You can install the application automatically using the provided installation script, which sets up the virtual environment, installs dependencies, and creates a desktop shortcut:
+You can install the application automatically in one command using the remote installation script (it installs dependencies, clones/updates the repository, sets up the virtual environment, and generates a desktop shortcut):
+
+### One-line Installation
+
+**Using wget:**
+```bash
+wget -qO- https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh | bash
+```
+
+**Using curl:**
+```bash
+curl -sSL https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh | bash
+```
+
+*Note: The installation directory will be created at `./ReadAloud` relative to the directory where the command was executed. The desktop shortcut will be generated on your Desktop (e.g., `~/Desktop` or `~/Schreibtisch`). You may need to right-click the shortcut on your desktop and select **"Allow Launching"** to trust and enable it.*
+
+### Manual Installation (Alternative)
+
+If you prefer to install manually:
 
 1. **Clone the repository**:
    ```bash
@@ -49,25 +67,13 @@ You can install the application automatically using the provided installation sc
    cd ReadAloud
    ```
 
-2. **Run the installation script**:
-   ```bash
-   chmod +x install.sh
-   ./install.sh
-   ```
-
-*Note: The script will create a desktop shortcut `readaloud.desktop` on your Desktop directory (e.g., `~/Desktop` or `~/Schreibtisch` depending on your system locale). In modern Linux desktop environments, you may need to right-click the shortcut on your desktop and select **"Allow Launching"** to trust and enable it.*
-
-### Manual Installation (Alternative)
-
-If you prefer to install manually:
-
-1. **Set up virtual environment**:
+2. **Set up virtual environment**:
    ```bash
    python -m venv venv
    source venv/bin/activate
    ```
 
-2. **Install dependencies**:
+3. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
