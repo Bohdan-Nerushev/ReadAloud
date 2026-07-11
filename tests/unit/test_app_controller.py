@@ -86,13 +86,13 @@ class TestAppController(unittest.TestCase):
         self.patcher_is_file.stop()
 
     def test_orchestration_flow_add_task(self):
-        """test_orchestration_flow_add_task: Перевіряє виклик QueueService при додаванні завдання."""
+        """test_orchestration_flow_add_task: Verifies that QueueService is called when a task is added."""
         self.controller.add_task(self.config)
         self.queue_service.add_task.assert_called_once()
         
     @patch('src.application.app_controller.PreparationWorker')
     def test_start_task_initializes_and_starts_worker(self, mock_worker_class):
-        """test_start_task_initializes_and_starts_worker: Перевіряє запуск PreparationWorker."""
+        """test_start_task_initializes_and_starts_worker: Verifies that the PreparationWorker is initialized and started."""
         mock_worker = MagicMock()
         mock_worker_class.return_value = mock_worker
         
@@ -104,7 +104,7 @@ class TestAppController(unittest.TestCase):
         mock_worker.start.assert_called_once()
 
     def test_on_preparation_finished_starts_generation(self):
-        """test_on_preparation_finished_starts_generation: Перевіряє перехід до генерації після підготовки."""
+        """test_on_preparation_finished_starts_generation: Verifies transition to audio generation after preparation is finished."""
         self.task_1.status = TaskStatus.PROCESSING
         self.controller._current_task = self.task_1
         
@@ -115,7 +115,7 @@ class TestAppController(unittest.TestCase):
         self.assertEqual(self.task_1.status, TaskStatus.PROCESSING)
 
     def test_on_preparation_error_handles_failure(self):
-        """test_on_preparation_error_handles_failure: Перевіряє обробку помилок підготовки."""
+        """test_on_preparation_error_handles_failure: Verifies error handling when task preparation fails."""
         # Set to PROCESSING so _finalize_task can progress but let's check marking
         self.task_1.status = TaskStatus.PROCESSING
         self.controller._current_task = self.task_1
@@ -127,7 +127,7 @@ class TestAppController(unittest.TestCase):
             self.queue_service.update_task_status.assert_called_with(TaskStatus.FAILED, "Failed")
 
     def test_initialize_task_state_emits_correct_signal(self):
-        """test_initialize_task_state_emits_correct_signal: Перевіряє, що сигнал progressUpdated випромінюється з 4 аргументами."""
+        """test_initialize_task_state_emits_correct_signal: Verifies that the progressUpdated signal is emitted with 4 arguments on initialization."""
         # Use a real signal behavior mock if possible or just check emit call
         self.controller._initialize_task_state(self.task_1)
         self.controller.progressUpdated.emit.assert_called_with(0, 0, "Preparing...", 0.0)

@@ -49,7 +49,7 @@ class TestGenerationService(unittest.TestCase):
 
     @patch('src.application.services.generation_service.ThreadManager')
     def test_batch_submission_logic(self, mock_thread_manager_class):
-        """test_batch_submission_logic: Перевірка розбиття чанків на батчі."""
+        """test_batch_submission_logic: Verification of text chunk splitting into batches."""
         mock_tm = mock_thread_manager_class.return_value
         self.service.start_generation(self.task, self.chunks, "/mock/out")
         
@@ -58,7 +58,7 @@ class TestGenerationService(unittest.TestCase):
         self.assertEqual(mock_tm.submit_task.call_count, 3)
 
     def test_generation_retry_logic(self):
-        """test_generation_retry_logic: Симуляція генерації батчу через AudioGenerator."""
+        """test_generation_retry_logic: Verification of batch generation via AudioGenerator."""
         batch = self.chunks[:10]
         self.service._output_dir = "/mock/out"
         
@@ -76,7 +76,7 @@ class TestGenerationService(unittest.TestCase):
 
     @patch('src.application.services.generation_service.ThreadManager')
     def test_pause_resume_behavior(self, mock_thread_manager_class):
-        """test_pause_resume_behavior: Перевірка зупинки та відновлення потоків."""
+        """test_pause_resume_behavior: Verification of thread pause and resume behavior."""
         mock_tm = mock_thread_manager_class.return_value
         self.service.start_generation(self.task, self.chunks, "/mock/out")
         
@@ -94,7 +94,7 @@ class TestGenerationService(unittest.TestCase):
 
     @patch('src.application.services.generation_service.ThreadManager')
     def test_progress_info_includes_speed(self, mock_thread_manager_class):
-        """test_progress_info_includes_speed: Перевірка повернення швидкості генерації."""
+        """test_progress_info_includes_speed: Verification of generation speed inclusion in progress info."""
         self.service.start_generation(self.task, self.chunks, "/mock/out")
         # Simulate some progress manually
         self.service._update_internal_progress(success=True)

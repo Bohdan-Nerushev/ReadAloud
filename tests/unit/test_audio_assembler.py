@@ -31,7 +31,7 @@ class TestAudioAssembler(unittest.TestCase):
         patch.stopall()
 
     def test_assemble_audio_creates_concat_file(self):
-        """test_assemble_audio_creates_concat_file: Перевіряє створення текстового списку файлів."""
+        """test_assemble_audio_creates_concat_file: Verifies creation of the text file list for concatenation."""
         audio_files = ["/tmp/1.mp3", "/tmp/2.mp3"]
         output_path = "/tmp/output.mp3"
         
@@ -53,7 +53,7 @@ class TestAudioAssembler(unittest.TestCase):
                     self.assertTrue(any("file '/tmp/1.mp3'" in c for c in calls))
 
     def test_assemble_audio_ffmpeg_command_structure(self):
-        """test_assemble_audio_ffmpeg_command_structure: Перевіряє правильність побудови команди ffmpeg."""
+        """test_assemble_audio_ffmpeg_command_structure: Verifies correctness of the ffmpeg command structure."""
         audio_files = ["1.mp3"]
         output_path = "out.mp3"
         
@@ -69,7 +69,7 @@ class TestAudioAssembler(unittest.TestCase):
                 self.assertIn('out.mp3', cmd)
 
     def test_assemble_audio_speed_adjustment(self):
-        """test_assemble_audio_speed_adjustment: Перевіряє додавання фільтра atempo."""
+        """test_assemble_audio_speed_adjustment: Verifies addition of the atempo audio filter for speed adjustment."""
         audio_files = ["1.mp3"]
         output_path = "out.mp3"
         
@@ -82,12 +82,12 @@ class TestAudioAssembler(unittest.TestCase):
                 self.assertIn('atempo=1.5', cmd)
 
     def test_assemble_audio_empty_list(self):
-        """test_assemble_audio_empty_list: Перевіряє викидання ValueError для порожнього списку."""
+        """test_assemble_audio_empty_list: Verifies ValueError is raised for an empty file list."""
         with self.assertRaises(ValueError):
             self.assembler.assemble_audio([], "out.mp3")
 
     def test_assemble_audio_ffmpeg_error(self):
-        """test_assemble_audio_ffmpeg_error: Перевіряє викидання виключення при помилці ffmpeg."""
+        """test_assemble_audio_ffmpeg_error: Verifies an exception is raised when ffmpeg fails with an error."""
         self.process_instance.returncode = 1
         audio_files = ["1.mp3"]
         
@@ -98,7 +98,7 @@ class TestAudioAssembler(unittest.TestCase):
                 self.assertIn("ffmpeg exited with code 1", str(cm.exception))
 
     def test_stop_terminates_processes(self):
-        """test_stop_terminates_processes: Перевіряє зупинку процесів."""
+        """test_stop_terminates_processes: Verifies active ffmpeg processes are terminated on stop."""
         mock_p = MagicMock()
         self.assembler._active_processes.add(mock_p)
         

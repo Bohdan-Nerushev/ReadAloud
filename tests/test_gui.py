@@ -27,7 +27,7 @@ class TestGUI(unittest.TestCase):
 
     @patch('src.main.QMessageBox')
     def test_project_name_validation(self, mock_msgbox):
-        """test_project_name_validation: Перевірка роботи валідатора назви проекту."""
+        """test_project_name_validation: Verification of project name validator logic."""
         # Setup mock behavior for UI methods
         self.mock_window.project_input.get_project_name.return_value = "Invalid/Name"
         self.mock_window.file_selector.get_selected_file.return_value = "/mock/test.txt"
@@ -52,7 +52,7 @@ class TestGUI(unittest.TestCase):
 
     @patch('src.main.QMessageBox')
     def test_file_path_existence_validation(self, mock_msgbox):
-        """test_file_path_existence_validation: Перевірка реакції на вибір неіснуючого файлу."""
+        """test_file_path_existence_validation: Verification of response to selecting a non-existent file."""
         self.mock_window.project_input.get_project_name.return_value = "ValidName"
         self.mock_window.file_selector.get_selected_file.return_value = "/non/existent/file.txt"
         self.mock_window.output_selector.get_selected_directory.return_value = "/mock/out"
@@ -71,7 +71,7 @@ class TestGUI(unittest.TestCase):
             self.assertIn("does not exist", call_args[2])
 
     def test_dynamic_ui_updates(self):
-        """test_dynamic_ui_updates: Перевірка синхронізації стану кнопок із станом черги."""
+        """test_dynamic_ui_updates: Verification of button state synchronization with the queue state."""
         mock_task = MagicMock(spec=GenerationTask)
         
         # 1. Test running state
@@ -95,7 +95,7 @@ class TestGUI(unittest.TestCase):
         self.mock_window.control_buttons.set_idle_state.assert_called_once()
 
     def test_task_deletion_calls_controller(self):
-        """test_task_deletion_calls_controller: Перевірка виклику контролера при видаленні завдання."""
+        """test_task_deletion_calls_controller: Verification of controller call upon task deletion request."""
         task_id = "test-uuid"
         self.app._on_task_delete_requested(task_id)
         self.mock_controller.cancel_task.assert_called_once_with(task_id)

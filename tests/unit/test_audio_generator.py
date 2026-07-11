@@ -32,7 +32,7 @@ class TestAudioGenerator(unittest.TestCase):
             self.generator._loop.call_soon_threadsafe(self.generator._loop.stop)
 
     def test_voice_mapping_coverage(self):
-        """test_voice_mapping_coverage: Перевіряє наявність мапінгу для всіх підтримуваних мов (en, uk, de, ru)."""
+        """test_voice_mapping_coverage: Verifies mapping existence for all supported languages (en, uk, de, ru)."""
         supported_langs = ['en', 'uk', 'de', 'ru']
         for lang in supported_langs:
             self.assertIn(lang, self.generator.VOICE_MAPPING)
@@ -40,7 +40,7 @@ class TestAudioGenerator(unittest.TestCase):
             self.assertIn('female', self.generator.VOICE_MAPPING[lang])
 
     def test_generate_audio_batch_calls_tts(self):
-        """test_generate_audio_batch_calls_tts: Перевіряє, що метод викликає edge_tts.Communicate."""
+        """test_generate_audio_batch_calls_tts: Verifies that the method calls edge_tts.Communicate."""
         chunk = AudioChunk(chunk_number=1, text_content="Test text")
         self.generator.generate_audio_batch([chunk], "en", "male", "/tmp")
         
@@ -53,7 +53,7 @@ class TestAudioGenerator(unittest.TestCase):
         self.mock_instance.save.assert_called()
 
     def test_generate_audio_batch_returns_paths(self):
-        """test_generate_audio_batch_returns_paths: Перевіряє повернення списку абсолютних шляхів."""
+        """test_generate_audio_batch_returns_paths: Verifies that a list of absolute output file paths is returned."""
         chunk1 = AudioChunk(chunk_number=1, text_content="Text 1")
         chunk2 = AudioChunk(chunk_number=2, text_content="Text 2")
         
@@ -65,13 +65,13 @@ class TestAudioGenerator(unittest.TestCase):
         self.assertTrue(Path(results[0][0]).is_absolute())
 
     def test_generate_audio_batch_unsupported_lang(self):
-        """test_generate_audio_batch_unsupported_lang: Перевіряє викидання ValueError для непідтримуваної мови."""
+        """test_generate_audio_batch_unsupported_lang: Verifies ValueError is raised for an unsupported language."""
         chunk = AudioChunk(chunk_number=1, text_content="text")
         with self.assertRaises(ValueError):
             self.generator.generate_audio_batch([chunk], "fr", "male", "/tmp")
 
     def test_generate_audio_batch_failure_handling(self):
-        """test_generate_audio_batch_failure_handling: Перевіряє коректну обробку помилок API."""
+        """test_generate_audio_batch_failure_handling: Verifies correct retry and error handling on API failure."""
         self.mock_instance.save.side_effect = Exception("API Error")
         chunk = AudioChunk(chunk_number=1, text_content="text")
         with self.assertRaises(Exception) as cm:

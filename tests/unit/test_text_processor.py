@@ -12,37 +12,37 @@ class TestTextProcessor(unittest.TestCase):
         self.processor = TextProcessor()
 
     def test_process_text_removes_quotes(self):
-        """test_process_text_removes_quotes: Перевіряє, що одинарні (') та подвійні (") лапки видаляються."""
+        """test_process_text_removes_quotes: Verifies that single (') and double (") quotes are removed."""
         input_text = 'Text with "double" and \'single\' quotes.'
         expected = "Text with double and single quotes."
         self.assertEqual(self.processor.process_text(input_text), expected)
 
     def test_process_text_removes_special_markers(self):
-        """test_process_text_removes_special_markers: Перевіряє видалення маркерів *** та ======"""
+        """test_process_text_removes_special_markers: Verifies removal of special markers like *** and ======"""
         input_text = "Text with *** markers and ====== equals."
         expected = "Text with  markers and  equals."
         self.assertEqual(self.processor.process_text(input_text), expected)
 
     def test_process_text_replaces_newlines(self):
-        """test_process_text_replaces_newlines: Перевіряє, що символи \n замінюються на 4 пробіли."""
+        """test_process_text_replaces_newlines: Verifies that newline characters are replaced with 4 spaces."""
         input_text = "Line 1\nLine 2"
         expected = "Line 1    Line 2"
         self.assertEqual(self.processor.process_text(input_text), expected)
 
     def test_process_text_empty_input(self):
-        """test_process_text_empty_input: Перевіряє поведінку при порожньому рядку."""
+        """test_process_text_empty_input: Verifies behavior when the input string is empty."""
         input_text = ""
         expected = ""
         self.assertEqual(self.processor.process_text(input_text), expected)
 
     def test_process_text_none_input(self):
-        """test_process_text_none_input: Перевіряє викидання ValueError, якщо вхідний текст None."""
+        """test_process_text_none_input: Verifies ValueError is raised if the input text is None."""
         with self.assertRaises(ValueError) as cm:
             self.processor.process_text(None)
         self.assertEqual(str(cm.exception), "Input text cannot be None")
 
     def test_process_text_complex_cleaning(self):
-        """test_process_text_complex_cleaning: Комбінована очистка."""
+        """test_process_text_complex_cleaning: Combined multi-stage text cleaning."""
         input_text = '***Header***\n"Content" with \'quotes\' and ======'
         expected = "Header    Content with quotes and "
         self.assertEqual(self.processor.process_text(input_text), expected)

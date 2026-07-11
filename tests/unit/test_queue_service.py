@@ -46,7 +46,7 @@ class TestQueueService(unittest.TestCase):
         self.path_patcher.stop()
 
     def test_add_task_sequence(self):
-        """test_add_task_sequence: Перевірка коректної нумерації та черговості доданих завдань."""
+        """test_add_task_sequence: Verification of correct numbering and order of added tasks."""
         task1 = self.queue_service.add_task(self.config)
         task2 = self.queue_service.add_task(self.config)
         
@@ -68,7 +68,7 @@ class TestQueueService(unittest.TestCase):
         self.assertEqual(retrieved2, task2)
 
     def test_status_transition_validation(self):
-        """test_status_transition_validation: Валідація дозволених переходів станів."""
+        """test_status_transition_validation: Validation of allowed task state transitions."""
         task = self.queue_service.add_task(self.config)
         self.queue_service.get_next_task() # Sets as current_task
         
@@ -88,7 +88,7 @@ class TestQueueService(unittest.TestCase):
             self.queue_service.update_task_status(TaskStatus.PROCESSING)
 
     def test_subscriber_notifications(self):
-        """test_subscriber_notifications: Перевірка отримування сигналів при зміні стану черги."""
+        """test_subscriber_notifications: Verification of subscriber notifications on queue state changes."""
         added_mock = MagicMock()
         updated_mock = MagicMock()
         status_mock = MagicMock()

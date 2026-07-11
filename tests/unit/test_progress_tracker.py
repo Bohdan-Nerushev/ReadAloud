@@ -12,7 +12,7 @@ from src.infrastructure.progress_tracker import ProgressTracker
 
 class TestProgressTracker(unittest.TestCase):
     def test_update_progress_percentage(self):
-        """test_update_progress_percentage: Перевіряє правильність розрахунку відсотків."""
+        """test_update_progress_percentage: Verifies correct calculation of progress percentage."""
         tracker = ProgressTracker(total_chunks=10)
         tracker.update_progress(success=True)
         tracker.update_progress(success=True)
@@ -24,7 +24,7 @@ class TestProgressTracker(unittest.TestCase):
         self.assertEqual(tracker.get_progress_percentage(), 30.0)
 
     def test_get_eta_string_valid_estimation(self):
-        """test_get_eta_string_valid_estimation: Перевіряє розрахунок приблизного часу завершення."""
+        """test_get_eta_string_valid_estimation: Verifies estimation of completion time (ETA string)."""
         tracker = ProgressTracker(total_chunks=10)
         tracker.start()
         
@@ -56,7 +56,7 @@ class TestProgressTracker(unittest.TestCase):
             self.assertEqual(eta_str, "00:00:16")
 
     def test_get_eta_string_no_data(self):
-        """test_get_eta_string_no_data: Перевіряє повернення '...' при відсутності даних."""
+        """test_get_eta_string_no_data: Verifies returning '...' when no progress data is available."""
         tracker = ProgressTracker(total_chunks=10)
         # No start() called, or no chunks updated
         self.assertEqual(tracker.get_eta_string(), "...")
@@ -65,7 +65,7 @@ class TestProgressTracker(unittest.TestCase):
         self.assertEqual(tracker.get_eta_string(), "...")
 
     def test_thread_safety(self):
-        """test_thread_safety: Перевіряє коректність лічильників при багатопотоковому оновленні."""
+        """test_thread_safety: Verifies thread-safety of counters under multi-threaded updates."""
         tracker = ProgressTracker(total_chunks=1000)
         
         def worker():
@@ -80,7 +80,7 @@ class TestProgressTracker(unittest.TestCase):
         self.assertEqual(tracker.get_progress_percentage(), 100.0)
 
     def test_invalid_total_chunks(self):
-        """test_invalid_total_chunks: Перевіряє викидання ValueError при total_chunks <= 0."""
+        """test_invalid_total_chunks: Verifies ValueError is raised for total_chunks <= 0."""
         with self.assertRaises(ValueError):
             ProgressTracker(total_chunks=0)
         with self.assertRaises(ValueError):

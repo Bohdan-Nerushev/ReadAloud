@@ -50,7 +50,7 @@ class TestConcurrency(unittest.TestCase):
 
     def test_concurrent_queue_management(self):
         """
-        test_concurrent_queue_management: Одночасне додавання великої кількості завдань з різних потоків.
+        test_concurrent_queue_management: Simultaneous addition of a large number of tasks from different threads.
         """
         num_threads = 10
         tasks_per_thread = 50
@@ -73,7 +73,7 @@ class TestConcurrency(unittest.TestCase):
 
     def test_rapid_cancel_during_processing(self):
         """
-        test_rapid_cancel_during_processing: Скасування завдання саме в момент активної генерації.
+        test_rapid_cancel_during_processing: Task cancellation at the exact moment of active generation.
         """
         # Create dependencies (mocked or real as needed)
         # For cancel test, we want to ensure stop calls on services are made.

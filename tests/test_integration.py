@@ -41,8 +41,8 @@ class TestIntegration(unittest.TestCase):
 
     def test_text_to_filesystem_integration(self):
         """
-        test_text_to_filesystem_integration: Повний цикл: Raw Text -> TextProcessor (очищення) -> 
-        TextChunker (розбиття) -> FileManager (запис на диск).
+        test_text_to_filesystem_integration: Full cycle: Raw Text -> TextProcessor (cleaning) -> 
+        TextChunker (splitting) -> FileManager (writing to disk).
         """
         raw_text = "Hello 'world'!\nThis is a *** test ====== of the system.\nNext line."
         # TextProcessor: ' and " removed, *** and ====== removed, \n -> 4 spaces
@@ -65,13 +65,13 @@ class TestIntegration(unittest.TestCase):
             # Verify content
             with open(path, 'r', encoding='utf-8') as f:
                 self.assertEqual(f.read(), chunk.text_content)
-
+ 
     @patch('src.application.services.generation_service.AudioGenerator')
     @patch('src.application.services.assembly_service.AudioAssembler')
     def test_app_orchestration_integration(self, mock_assembler, mock_generator):
         """
-        test_app_orchestration_integration: Перевірка взаємодії AppController з GenerationService 
-        та AssemblyService на мінімальному наборі даних.
+        test_app_orchestration_integration: Verification of AppController interaction with GenerationService 
+        and AssemblyService on a minimal dataset.
         """
         # Create dependencies
         queue_service = QueueService()

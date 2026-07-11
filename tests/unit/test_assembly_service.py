@@ -28,7 +28,7 @@ class TestAssemblyService(unittest.TestCase):
         self.service = AssemblyService(self.mock_assembler)
 
     def test_batch_completion_tracking(self):
-        """test_batch_completion_tracking: Перевірка логіки очікування всіх частин."""
+        """test_batch_completion_tracking: Verification of tracking logic for waiting for all parts of a batch."""
         # Setup: 110 chunks, BATCH_SIZE=40 -> 3 batches (40, 40, 30)
         self.service.reset(total_chunks=110)
         
@@ -53,7 +53,7 @@ class TestAssemblyService(unittest.TestCase):
         self.assertEqual(len(self.service._batch_submitted), 1)
 
     def test_assembly_strategy_selection(self):
-        """test_assembly_strategy_selection: Вибір між fast та full стратегіями."""
+        """test_assembly_strategy_selection: Verification of strategy selection between fast and full assembly."""
         # Case 1: All batches ready and speed is 1.0 -> Fast assembly
         self.service.reset(total_chunks=80) # 2 batches of 40
         self.service._batch_results = {0: "part0.mp3", 1: "part1.mp3"}
@@ -75,7 +75,7 @@ class TestAssemblyService(unittest.TestCase):
             mock_full.assert_called_once()
 
     def test_cleanup_after_assembly(self):
-        """test_cleanup_after_assembly: Перевірка видалення тимчасових файлів part_X.mp3."""
+        """test_cleanup_after_assembly: Verification of temporary file cleanup (part_X.mp3) after assembly."""
         self.service.reset(total_chunks=80)
         self.service._batch_results = {0: "/mock/part0.mp3", 1: "/mock/part1.mp3"}
         

@@ -12,7 +12,7 @@ class TestTextChunker(unittest.TestCase):
         self.chunker = TextChunker()
 
     def test_chunk_text_respects_boundaries(self):
-        """test_chunk_text_respects_boundaries: Перевіряє, що текст не розбивається посеред слова."""
+        """test_chunk_text_respects_boundaries: Verifies that text is not split in the middle of a word."""
         text = "word1 word2 word3"
         # chunk_size=7 points to " word2"
         # The algorithm should find the space after "word2" and include it.
@@ -21,21 +21,21 @@ class TestTextChunker(unittest.TestCase):
         self.assertEqual(chunks[1].text_content, "word3")
 
     def test_chunk_text_sequencing(self):
-        """test_chunk_text_sequencing: Перевіряє, що фрагменти мають послідовні номери, починаючи з 1."""
+        """test_chunk_text_sequencing: Verifies that chunks have sequential numbers starting from 1."""
         text = "This is a longer text to create multiple chunks."
         chunks = self.chunker.chunk_text(text, chunk_size=10)
         for i, chunk in enumerate(chunks):
             self.assertEqual(chunk.chunk_number, i + 1)
 
     def test_chunk_text_small_size(self):
-        """test_chunk_text_small_size: Перевіряє розбиття короткого тексту."""
+        """test_chunk_text_small_size: Verifies chunking of short text."""
         text = "Short"
         chunks = self.chunker.chunk_text(text, chunk_size=100)
         self.assertEqual(len(chunks), 1)
         self.assertEqual(chunks[0].text_content, "Short")
 
     def test_chunk_text_exact_multiplier(self):
-        """test_chunk_text_exact_multiplier: Перевіряє розбиття, коли довжина тексту кратна розміру чанка."""
+        """test_chunk_text_exact_multiplier: Verifies chunking when text length is a multiple of chunk size."""
         # "1234 6789 " is 10 chars. chunk_size=5.
         # target_end=5 ("1234 "). text.find(' ', 5) finds no space after pos 5.
         # So it takes the rest of the text.
@@ -45,14 +45,14 @@ class TestTextChunker(unittest.TestCase):
         self.assertEqual(chunks[0].text_content, "1234 6789 ")
 
     def test_chunk_text_invalid_size(self):
-        """test_chunk_text_invalid_size: Перевіряє викидання ValueError при chunk_size <= 0."""
+        """test_chunk_text_invalid_size: Verifies ValueError is raised for chunk_size <= 0."""
         with self.assertRaises(ValueError):
             self.chunker.chunk_text("text", chunk_size=0)
         with self.assertRaises(ValueError):
             self.chunker.chunk_text("text", chunk_size=-1)
 
     def test_chunk_text_empty_string(self):
-        """test_chunk_text_empty_string: Перевіряє викидання ValueError при порожньому тексті."""
+        """test_chunk_text_empty_string: Verifies ValueError is raised for an empty input string."""
         with self.assertRaises(ValueError):
             self.chunker.chunk_text("")
         with self.assertRaises(ValueError):
