@@ -40,7 +40,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     git -c http.sslVerify=false reset --hard origin/master
 else
     echo "📦 Cloning ReadAloud repository (master branch) to $INSTALL_DIR..."
-    git -c http.sslVerify=false clone -b master https://git.mam.dev/bnerushev/readaloud.git "$INSTALL_DIR"
+    git -c http.sslVerify=false clone -b master https://github.com/Bohdan-Nerushev/ReadAloud.git "$INSTALL_DIR"
     cd "$INSTALL_DIR" || exit 1
 fi
 
