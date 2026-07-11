@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 # and prevent accidental discovery of non-test utility scripts.
 
 echo "📦 Running core test suite..."
-PYTHONPATH=. ./venv/bin/python3 -m unittest -v \
+PYTHONPATH=. ./venv/bin/python3 -m unittest \
     tests/unit/test_queue_service.py \
     tests/unit/test_generation_service.py \
     tests/unit/test_assembly_service.py \
@@ -39,7 +39,7 @@ PYTHONPATH=. ./venv/bin/python3 -m unittest -v \
     tests/test_gui.py
 
 echo "📦 Running GUI logic suite (offscreen)..."
-PYTHONPATH=. QT_QPA_PLATFORM=offscreen ./venv/bin/python3 tests/unit/test_gui_logic.py -v
+PYTHONPATH=. QT_QPA_PLATFORM=offscreen ./venv/bin/python3 tests/unit/test_gui_logic.py
 
 echo ""
 echo "------------------------------------------------"

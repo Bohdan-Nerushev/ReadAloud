@@ -127,6 +127,8 @@ class ReadAloudApplication:
             self._window.progress_display.show()
         else:
             self._window.control_buttons.set_idle_state()
+            self._window.progress_display.hide()
+            self._window.progress_display.reset()
     
 
     

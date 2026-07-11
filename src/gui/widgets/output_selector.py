@@ -19,7 +19,13 @@ class OutputSelectorWidget(QWidget):
     
     outputDirSelected = pyqtSignal(str)
     
-    DEFAULT_PATH = "/home/bnerushev/Schreibtisch"
+    _desktop_dir = Path.home() / "Desktop"
+    if not _desktop_dir.exists():
+        _desktop_dir = Path.home() / "Schreibtisch"
+    if not _desktop_dir.exists():
+        _desktop_dir = Path.home()
+
+    DEFAULT_PATH = str(_desktop_dir)
     
     def __init__(
             self,
@@ -48,7 +54,7 @@ class OutputSelectorWidget(QWidget):
             0
         )
         
-        label = QLabel("Output Directory (Result folder):")
+        label = QLabel("Output Directory (in folder final):")
         label.setStyleSheet(Styles.LABEL_FIELD)
         layout.addWidget(label)
         

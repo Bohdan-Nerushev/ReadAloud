@@ -11,12 +11,17 @@ mock_qt = MagicMock()
 class MockQObject:
     def __init__(self, *args, **kwargs): pass
 mock_qt.QObject = MockQObject
-def mock_signal(*args):
-    s = MagicMock()
-    s.connect = MagicMock()
-    s.emit = MagicMock()
-    return s
-mock_qt.pyqtSignal = mock_signal
+
+class MockSignal:
+    def __init__(self, *args):
+        self._slots = []
+    def connect(self, slot):
+        self._slots.append(slot)
+    def emit(self, *args, **kwargs):
+        for slot in self._slots:
+            slot(*args, **kwargs)
+
+mock_qt.pyqtSignal = MockSignal
 sys.modules['PyQt6.QtCore'] = mock_qt
 sys.modules['PyQt6.QtWidgets'] = MagicMock()
 

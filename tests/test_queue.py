@@ -96,7 +96,6 @@ class TestQueueSystem(unittest.TestCase):
             self.test_file2.unlink()
 
     def test_add_task_starts_processing_if_idle(self):
-        print("\nTesting: Add task starts processing if idle")
         self.controller.add_task(self.config)
         
         self.assertIsNotNone(self.controller._queue_service._current_task)
@@ -108,7 +107,6 @@ class TestQueueSystem(unittest.TestCase):
 
 
     def test_add_task_queues_if_busy(self):
-        print("Testing: Add task queues if busy")
         # Start first task
         self.controller.add_task(self.config)
         
@@ -136,7 +134,6 @@ class TestQueueSystem(unittest.TestCase):
 
 
     def test_sequential_processing(self):
-        print("Testing: Sequential processing")
         self.controller.add_task(self.config)
         
         config2 = ProjectConfig(
@@ -164,7 +161,6 @@ class TestQueueSystem(unittest.TestCase):
 
 
     def test_stop_generation_handles_current_task(self):
-        print("Testing: Stop generation logic")
         self.controller.add_task(self.config)
         
         self.controller.stop_generation()
