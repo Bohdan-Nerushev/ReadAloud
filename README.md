@@ -2,6 +2,9 @@
 
 A high-performance Python & PyQt6 desktop application powered by Microsoft Edge TTS to convert text documents into high-quality MP3 audio. It features concurrent queue management with real-time monitoring (progress, ETA) and pause/resume controls, human-like voice synthesis with customizable speed and gender selection, and a multi-threaded architecture (up to 40 threads) with smart text chunking and structured logging.
 
+<p align="center">
+  <img src="docs/video_instructions/recording.gif" alt="ReadAloud Usage Demo" width="600" />
+</p>
 ## Table of Contents
 
 1. [🛠 System Requirements](#1-system-requirements)
