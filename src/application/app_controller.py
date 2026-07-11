@@ -533,21 +533,35 @@ class ApplicationController(QObject):
     def _on_assembly_error(self, error_msg: str) -> None:
         logging.error(f"Assembly error: {error_msg}")
 
-    def pause_generation(self) -> None:
+    def pause_generation(self, task_id: Optional[str] = None) -> None:
         """Pauses the ongoing audio generation."""
-        task = self._get_current_task()
-        if task and task.status == TaskStatus.PAUSED:
-            if not self._generation_service._thread_manager:
-                self._start_task(task)
-                return
+        current_task = self._get_current_task()
+        if task_id is None and current_task:
+            task_id = str(current_task.id)
 
-        is_paused = self._generation_service.pause()
-        if is_paused:
-            self._queue_service.update_task_status(TaskStatus.PAUSED, "Paused")
-            logging.info("Generation paused")
+        if not task_id:
+            return
+
+        if current_task and str(current_task.id) == task_id:
+            if current_task.status == TaskStatus.PAUSED:
+                if not self._generation_service._thread_manager:
+                    self._start_task(current_task)
+                    return
+
+            is_paused = self._generation_service.pause()
+            if is_paused:
+                self._queue_service.update_task_status(TaskStatus.PAUSED, "Paused")
+                logging.info(f"Generation paused for task {task_id}")
+            else:
+                self._queue_service.update_task_status(TaskStatus.PROCESSING, "Resumed")
+                logging.info(f"Generation resumed for task {task_id}")
         else:
-            self._queue_service.update_task_status(TaskStatus.PROCESSING, "Resumed")
-            logging.info("Generation resumed")
+            updated_task = self._queue_service.toggle_task_pause(task_id)
+            if updated_task:
+                logging.info(f"Task {task_id} pause status toggled to: {updated_task.status.value}")
+                self._save_state()
+                if updated_task.status == TaskStatus.PENDING:
+                    self._process_queue()
 
     def shutdown(self) -> None:
         """Gracefully stops ongoing processing and saves queue state for next run."""

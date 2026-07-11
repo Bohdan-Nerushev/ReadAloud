@@ -61,14 +61,36 @@ class QueueService(QObject):
         if self._current_task is not None:
             return None
 
-        if not self._task_queue:
+        next_task_idx = -1
+        for i, task in enumerate(self._task_queue):
+            if task.status != TaskStatus.PAUSED:
+                next_task_idx = i
+                break
+
+        if next_task_idx == -1:
             self.statusChanged.emit(False)
             return None
 
         self.statusChanged.emit(True)
             
-        self._current_task = self._task_queue.popleft()
+        task = self._task_queue[next_task_idx]
+        del self._task_queue[next_task_idx]
+        self._current_task = task
         return self._current_task
+
+    def toggle_task_pause(self, task_id: str) -> Optional[GenerationTask]:
+        """
+        Toggles the pause status of a task in the queue.
+        """
+        for task in self._task_queue:
+            if str(task.id) == task_id:
+                if task.status == TaskStatus.PAUSED:
+                    task.update_status(TaskStatus.PENDING, "Pending")
+                else:
+                    task.update_status(TaskStatus.PAUSED, "Paused")
+                self._notify_task_updated(task)
+                return task
+        return None
 
     def finalize_current_task(
             self

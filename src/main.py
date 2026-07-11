@@ -44,8 +44,6 @@ class ReadAloudApplication:
     ) -> None:
         """Sets up signals and slots."""
         self._window.control_buttons.startClicked.connect(self._on_start_clicked)
-        self._window.control_buttons.pauseClicked.connect(self._controller.pause_generation)
-        self._window.control_buttons.stopClicked.connect(self._controller.stop_generation)
 
         self._controller.progressUpdated.connect(self._on_progress_updated)
         self._controller.assemblyProgressUpdated.connect(self._on_assembly_progress_updated)
@@ -60,6 +58,7 @@ class ReadAloudApplication:
         # Connect queue list signals (per-task controls)
         # Connect queue list signals (per-task controls)
         self._window.queue_list.taskDeleteRequested.connect(self._on_task_delete_requested)
+        self._window.queue_list.taskPauseRequested.connect(self._controller.pause_generation)
 
     def _on_start_clicked(
             self

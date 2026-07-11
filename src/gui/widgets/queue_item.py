@@ -15,6 +15,7 @@ class QueueItemWidget(QWidget):
     """
     
     deleteRequested = pyqtSignal(str)
+    pauseRequested = pyqtSignal(str)
     
     def __init__(
             self,
@@ -116,6 +117,12 @@ class QueueItemWidget(QWidget):
         buttons_group = QHBoxLayout()
         buttons_group.setSpacing(8)
         
+        self.pause_button = QPushButton("Pause")
+        self.pause_button.setFixedSize(70, 26)
+        self.pause_button.setStyleSheet(Styles.BUTTON_PAUSE + "QPushButton { padding: 0px; font-size: 11px; }")
+        self.pause_button.clicked.connect(lambda: self.pauseRequested.emit(str(self.task_id)))
+        buttons_group.addWidget(self.pause_button)
+        
         self.delete_button = QPushButton("X")
         self.delete_button.setFixedSize(30, 26)
         self.delete_button.setStyleSheet(Styles.BUTTON_STOP + "QPushButton { padding: 0px; }")
@@ -158,6 +165,16 @@ class QueueItemWidget(QWidget):
         
         # Ensure they are always visible as per user's request for the second task
         self.delete_button.show()
+        
+        if task.status in (TaskStatus.PROCESSING, TaskStatus.PAUSED, TaskStatus.PENDING):
+            if task.status == TaskStatus.PAUSED:
+                self.pause_button.setText("Resume")
+            else:
+                self.pause_button.setText("Pause")
+            self.pause_button.setEnabled(True)
+            self.pause_button.show()
+        else:
+            self.pause_button.hide()
         
     def _get_status_style(
             self,

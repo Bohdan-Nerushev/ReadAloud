@@ -53,19 +53,18 @@ class TestGUILogic(unittest.TestCase):
         # Initial state (idle)
         widget.set_idle_state()
         self.assertTrue(widget._start_button.isEnabled())
-        self.assertFalse(widget._pause_button.isEnabled())
-        self.assertFalse(widget._stop_button.isEnabled())
         
         # Running state
         widget.set_running_state()
         self.assertTrue(widget._start_button.isEnabled())
-        self.assertTrue(widget._pause_button.isEnabled())
-        self.assertTrue(widget._stop_button.isEnabled())
-        self.assertEqual(widget._pause_button.text(), "Pause Generation")
         
         # Paused state
         widget.set_paused_state()
-        self.assertEqual(widget._pause_button.text(), "Resume Generation")
+        self.assertTrue(widget._start_button.isEnabled())
+        
+        # Disable all
+        widget.disable_all()
+        self.assertFalse(widget._start_button.isEnabled())
         
     def test_queue_item_emits_delete(self):
         """Test that delete button emits deleteRequested signal."""
@@ -82,6 +81,26 @@ class TestGUILogic(unittest.TestCase):
         
         spy = MagicMock()
         widget.deleteRequested.connect(spy)
+        widget.delete_button.click()
+        spy.assert_called_once_with(str(task.id))
+
+    def test_queue_item_emits_pause(self):
+        """Test that pause button emits pauseRequested signal."""
+        config = MagicMock(spec=ProjectConfig)
+        config.project_name = "Test"
+        config.output_dir_path = "/tmp"
+        config.language = "en"
+        config.gender = "male"
+        config.speed = 1.0
+        config.thread_count = 1
+        
+        task = GenerationTask(config=config)
+        widget = QueueItemWidget(task)
+        
+        spy = MagicMock()
+        widget.pauseRequested.connect(spy)
+        widget.pause_button.click()
+        spy.assert_called_once_with(str(task.id))
         
     def test_queue_list_removal(self):
         """Test that remove_task correctly removes the widget from internal dict and list."""

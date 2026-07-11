@@ -17,6 +17,7 @@ class QueueListWidget(QWidget):
     """
     
     taskDeleteRequested = pyqtSignal(str) # task_id
+    taskPauseRequested = pyqtSignal(str) # task_id
     
     def __init__(
             self,
@@ -67,6 +68,7 @@ class QueueListWidget(QWidget):
         
         # Connect signals from queue item
         widget.deleteRequested.connect(self.taskDeleteRequested.emit)
+        widget.pauseRequested.connect(self.taskPauseRequested.emit)
         
         item.setSizeHint(widget.sizeHint())
         
