@@ -147,5 +147,17 @@ class TestAppController(unittest.TestCase):
         mock_signal.emit.assert_called_once_with(True)
         self.assertEqual(self.task_1.status, TaskStatus.PAUSED)
 
+    def test_prepare_output_path_adds_timestamp(self):
+        """test_prepare_output_path_adds_timestamp: Verifies that output file has the timestamp appended to prevent overwrites."""
+        output_path = self.controller._prepare_output_path(self.task_1)
+        self.assertTrue(output_path.name.startswith("Test_"))
+        self.assertTrue(output_path.name.endswith(".mp3"))
+        name_without_ext = output_path.stem
+        parts = name_without_ext.split('_')
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[0], "Test")
+        self.assertEqual(len(parts[1]), 8)
+        self.assertEqual(len(parts[2]), 6)
+
 if __name__ == '__main__':
     unittest.main()

@@ -9,6 +9,7 @@ import time
 import re
 import threading
 from pathlib import Path
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Any, Dict, Set
 
@@ -780,7 +781,8 @@ class ApplicationController(QObject):
         self._file_manager.ensure_directory_exists(str(final_dir))
 
         safe_name = self._sanitize_filename(task.config.project_name)
-        return final_dir / f"{safe_name}.mp3"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return final_dir / f"{safe_name}_{timestamp}.mp3"
 
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitizes the project name to be a valid filename."""
