@@ -31,7 +31,7 @@ class TestAudioGenerator(unittest.TestCase):
 
     def test_voice_mapping_coverage(self):
         """test_voice_mapping_coverage: Verifies mapping existence for all supported languages (en, uk, de, ru)."""
-        supported_langs = ['en', 'uk', 'de', 'ru']
+        supported_langs = ['en', 'uk', 'de', 'ru', 'fr', 'es', 'it']
         for lang in supported_langs:
             self.assertIn(lang, self.generator.VOICE_MAPPING)
             self.assertIn('male', self.generator.VOICE_MAPPING[lang])
@@ -66,7 +66,7 @@ class TestAudioGenerator(unittest.TestCase):
         """test_generate_audio_batch_unsupported_lang: Verifies ValueError is raised for an unsupported language."""
         chunk = AudioChunk(chunk_number=1, text_content="text")
         with self.assertRaises(ValueError):
-            self.generator.generate_audio_batch([chunk], "fr", "male", "/tmp")
+            self.generator.generate_audio_batch([chunk], "ja", "male", "/tmp")
 
     def test_generate_audio_batch_failure_handling(self):
         """test_generate_audio_batch_failure_handling: Verifies correct retry and error handling on API failure."""

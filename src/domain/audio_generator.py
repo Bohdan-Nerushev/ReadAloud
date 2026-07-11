@@ -37,6 +37,18 @@ class AudioGenerator:
         'ru': {
             'male': 'ru-RU-DmitryNeural',
             'female': 'ru-RU-SvetlanaNeural'
+        },
+        'fr': {
+            'male': 'fr-FR-HenriNeural',
+            'female': 'fr-FR-DeniseNeural'
+        },
+        'es': {
+            'male': 'es-ES-AlvaroNeural',
+            'female': 'es-ES-ElviraNeural'
+        },
+        'it': {
+            'male': 'it-IT-ValerioNeural',
+            'female': 'it-IT-ElsaNeural'
         }
     }
     

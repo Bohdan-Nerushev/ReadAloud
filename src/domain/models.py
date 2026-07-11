@@ -64,7 +64,7 @@ class ProjectConfig:
                 f"Input path is not a file: {self.input_file_path}"
             )
 
-        allowed_languages: Final = {"en", "uk", "de", "ru"}
+        allowed_languages: Final = {"en", "uk", "de", "ru", "fr", "es", "it"}
         if self.language not in allowed_languages:
             raise ConfigurationException(
                 f"Language must be one of {allowed_languages}, got: {self.language}"

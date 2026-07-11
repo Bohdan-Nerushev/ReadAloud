@@ -22,7 +22,10 @@ class LanguageSelectorWidget(QWidget):
         "English": "en",
         "Ukrainian": "uk",
         "German": "de",
-        "Russian": "ru"
+        "Russian": "ru",
+        "French": "fr",
+        "Spanish": "es",
+        "Italian": "it"
     }
     
     def __init__(
