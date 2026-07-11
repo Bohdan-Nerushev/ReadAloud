@@ -80,7 +80,7 @@ class TestIntegration(unittest.TestCase):
         file_manager = FileManager()
         
         # We need real or mock services but keep-em-alive for controller
-        generation_service = GenerationService(mock_generator.return_value, MagicMock())
+        generation_service = GenerationService(mock_generator.return_value)
         assembly_service = AssemblyService(mock_assembler.return_value)
         
         controller = ApplicationController(

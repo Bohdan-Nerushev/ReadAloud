@@ -33,24 +33,13 @@ class TestAssemblyService(unittest.TestCase):
         self.service.reset(total_chunks=110)
         
         # 1. Fill some files but not enough for a full batch (30 files, batch size is 40)
-        for i in range(30):
-            self.service.mark_chunk_ready(i, duration=1.0)
+        for i in range(39):
+            batch_idx = self.service.mark_chunk_ready(i, duration=1.0)
+            self.assertIsNone(batch_idx)
             
-        available_files = [f"file_{i}.mp3" for i in range(30)] + [None] * 80
-        self.service.check_and_submit_batches(available_files, "/mock/out", 1.0)
-        
-        # Verify no batches submitted
-        self.assertEqual(len(self.service._batch_submitted), 0)
-        
         # 2. Fill first batch (40 files)
-        for i in range(30, 40):
-             batch_idx = self.service.mark_chunk_ready(i, duration=1.0)
-             if batch_idx is not None:
-                 available_files = [f"file_{k}.mp3" for k in range(40)] + [None] * 70
-                 self.service.submit_batch_by_index(batch_idx, available_files[:40], "/mock/out", 1.0, "test-id")
-        
-        # Verify 1 batch submitted
-        self.assertEqual(len(self.service._batch_submitted), 1)
+        batch_idx = self.service.mark_chunk_ready(39, duration=1.0)
+        self.assertEqual(batch_idx, 0)
 
     def test_assembly_strategy_selection(self):
         """test_assembly_strategy_selection: Verification of strategy selection between fast and full assembly."""
@@ -93,6 +82,18 @@ class TestAssemblyService(unittest.TestCase):
             # Verify unlink was called for both parts
             mock_p0.unlink.assert_called_once()
             mock_p1.unlink.assert_called_once()
+
+    def test_stop_and_reset_behavior(self):
+        """test_stop_and_reset_behavior: Verifies that after stop() is called, reset() re-initializes the executor and submit works."""
+        self.service.stop()
+        self.assertIsNone(self.service._executor)
+        
+        self.service.reset(total_chunks=80)
+        self.assertIsNotNone(self.service._executor)
+        
+        with patch.object(self.service._executor, 'submit') as mock_submit:
+            self.service.submit_batch_by_index(0, ["file1.mp3"], "/tmp", 1.0, "correlation-id")
+            mock_submit.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()

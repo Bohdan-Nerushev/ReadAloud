@@ -45,7 +45,7 @@ class TestPersistenceIntegration(unittest.TestCase):
         self.mock_generator = MagicMock()
         self.mock_generator._get_file_duration_fast.return_value = 2.5
 
-        self.generation_service = GenerationService(self.mock_generator, MagicMock())
+        self.generation_service = GenerationService(self.mock_generator)
         self.assembly_service = AssemblyService(MagicMock())
 
         self.controller = ApplicationController(

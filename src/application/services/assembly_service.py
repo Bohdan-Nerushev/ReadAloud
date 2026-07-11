@@ -9,12 +9,13 @@ import logging
 import threading
 from typing import List, Dict, Set, Optional, Tuple
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future, wait
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from src.domain.audio_assembler import AudioAssembler
 from src.domain.models import GenerationTask, ProjectConfig
+from src.infrastructure.logging_config import set_correlation_id
 
 class AssemblyService(QObject):
     """
@@ -34,6 +35,7 @@ class AssemblyService(QObject):
         self._audio_assembler = audio_assembler
         
         self._executor = ThreadPoolExecutor(max_workers=2)
+        self._futures: List[Future] = []
         self._batch_submitted: Set[int] = set()
         self._batch_results: Dict[int, str] = {}
         self._batch_durations: Dict[int, List[float]] = {} # batch_index -> list of chunk durations
@@ -45,6 +47,7 @@ class AssemblyService(QObject):
     def reset(self, total_chunks: int) -> None:
         """Resets state for a new task."""
         with self._state_lock:
+            self._futures.clear()
             self._batch_submitted.clear()
             self._batch_results.clear()
             self._batch_durations.clear()
@@ -56,6 +59,10 @@ class AssemblyService(QObject):
             for i in range(total_batches):
                 self._batch_ready_counts[i] = 0
                 self._batch_durations[i] = [0.0] * self._get_batch_size(i)
+
+        # Re-create executor if it was stopped/shutdown
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=2)
 
     def _get_batch_size(self, batch_index: int) -> int:
         """Returns the number of chunks in a given batch."""
@@ -91,39 +98,6 @@ class AssemblyService(QObject):
                     return batch_index
         return None
 
-    def check_and_submit_batches(
-        self, 
-        available_files: List[Optional[str]], 
-        output_dir: str,
-        speed: float,
-        correlation_id: str = "legacy-batch"
-    ) -> None:
-        """
-        No longer used for primary polling, but kept for compatibility or 
-        manual triggers if needed. Uses the optimized logic.
-        """
-        if self._chunks_count == 0:
-            return
-
-        total_batches = (self._chunks_count + self.BATCH_SIZE - 1) // self.BATCH_SIZE
-        
-        for i in range(total_batches):
-            is_ready = False
-            with self._state_lock:
-                if i in self._batch_submitted:
-                    continue
-                if self._batch_ready_counts.get(i, 0) == self._get_batch_size(i):
-                    is_ready = True
-            
-            if is_ready:
-                start_idx = i * self.BATCH_SIZE
-                end_idx = min(start_idx + self.BATCH_SIZE, self._chunks_count)
-                files = available_files[start_idx:end_idx]
-                
-                # Double check all files are present if we use this method
-                if all(f is not None for f in files):
-                    self.submit_batch_by_index(i, files, output_dir, speed, correlation_id)
-
     def submit_batch_by_index(self, batch_index: int, files: List[str], output_dir: str, speed: float, correlation_id: str) -> None:
         """Submits a batch assembly task by index using optimized duration info."""
         with self._state_lock:
@@ -136,7 +110,6 @@ class AssemblyService(QObject):
         logging.info(f"Submitting batch {batch_index} for assembly ({len(files)} files)")
 
         def _assemble_task():
-            from src.infrastructure.logging_config import set_correlation_id
             set_correlation_id(correlation_id)
             try:
                 self._audio_assembler.assemble_audio(
@@ -151,7 +124,11 @@ class AssemblyService(QObject):
                 logging.error(f"Batch {batch_index} assembly failed: {e}")
                 raise
 
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=2)
         future = self._executor.submit(_assemble_task)
+        with self._state_lock:
+            self._futures.append(future)
         
         def _done_callback(fut):
             try:
@@ -176,14 +153,10 @@ class AssemblyService(QObject):
         Blocking call - should be run in a separate thread by the caller.
         """
         # Wait for any pending batches
-        self._executor.shutdown(wait=True)
-        # Re-create executor for next time (though reset should probably handle this, strict rule: reset creates new executor?)
-        # Better: keep executor alive, just wait. shutdown(wait=True) kills it.
-        # We need to restart it if we kill it. 
-        # For this implementation, we will just wait. But shutdown kills it.
-        # Let's just wait on futures if we kept them. 
-        # But for simplicity, let's assume `check_and_submit_batches` was driving it.
-        # If we are here, we assume generation is done.
+        with self._state_lock:
+            futures = list(self._futures)
+        if futures:
+            wait(futures)
         
         # Determine strategy
         parts, use_fast = self._get_assembly_parts()
@@ -209,9 +182,6 @@ class AssemblyService(QObject):
                     except Exception as e:
                         logging.warning(f"Failed to delete temporary part {part}: {e}")
 
-        # Reinstate executor for next run
-        self._executor = ThreadPoolExecutor(max_workers=2)
-
     def _get_assembly_parts(self) -> Tuple[List[str], bool]:
         """Check if we have all batch parts."""
         if self._chunks_count == 0:
@@ -227,7 +197,6 @@ class AssemblyService(QObject):
         return ordered, True
 
     def _assemble_fast(self, parts: List[str], output_path: Path, correlation_id: str) -> None:
-        from src.infrastructure.logging_config import set_correlation_id
         set_correlation_id(correlation_id)
         logging.info("Fast assembly")
         self._audio_assembler.assemble_audio(
@@ -239,7 +208,6 @@ class AssemblyService(QObject):
         )
 
     def _assemble_full(self, files: List[str], output_path: Path, speed: float, correlation_id: str) -> None:
-        from src.infrastructure.logging_config import set_correlation_id
         set_correlation_id(correlation_id)
         logging.info("Full assembly")
         self._audio_assembler.assemble_audio(
@@ -255,4 +223,6 @@ class AssemblyService(QObject):
 
     def stop(self) -> None:
         """Stops all running assembly tasks."""
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        if self._executor:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor = None

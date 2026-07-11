@@ -5,23 +5,26 @@ Queue service for managing generation tasks.
 import logging
 from collections import deque
 from typing import Optional, List, Callable
+from PyQt6.QtCore import QObject, pyqtSignal
 from src.domain.models import GenerationTask, TaskStatus, ProjectConfig
 
 
-class QueueService:
+class QueueService(QObject):
     """
     Service responsible for managing the queue of audio generation tasks.
     """
+
+    taskAdded = pyqtSignal(object)
+    taskUpdated = pyqtSignal(object)
+    statusChanged = pyqtSignal(bool)
 
     def __init__(
             self
     ) -> None:
         """Initialize the QueueService."""
+        super().__init__()
         self._task_queue: deque[GenerationTask] = deque()
         self._current_task: Optional[GenerationTask] = None
-        self._on_task_added_callbacks: List[Callable[[GenerationTask], None]] = []
-        self._on_task_updated_callbacks: List[Callable[[GenerationTask], None]] = []
-        self._on_status_changed_callbacks: List[Callable[[bool], None]] = []
 
     def add_task(
             self,
@@ -42,8 +45,7 @@ class QueueService:
         self._task_queue.append(task)
         logging.info(f"Task added to queue: {task.id} (Project: {config.project_name})")
         
-        for callback in self._on_task_added_callbacks:
-            callback(task)
+        self.taskAdded.emit(task)
             
         return task
 
@@ -60,12 +62,10 @@ class QueueService:
             return None
 
         if not self._task_queue:
-            for callback in self._on_status_changed_callbacks:
-                callback(False)
+            self.statusChanged.emit(False)
             return None
 
-        for callback in self._on_status_changed_callbacks:
-            callback(True)
+        self.statusChanged.emit(True)
             
         self._current_task = self._task_queue.popleft()
         return self._current_task
@@ -130,8 +130,7 @@ class QueueService:
         self._task_queue.clear()
         self._current_task = None
         logging.info("All tasks cleared from queue.")
-        for callback in self._on_status_changed_callbacks:
-            callback(False)
+        self.statusChanged.emit(False)
 
     def get_all_tasks(self) -> List[GenerationTask]:
         """Returns all tasks including current and pending."""
@@ -146,26 +145,25 @@ class QueueService:
             callback: Callable[[GenerationTask], None]
     ) -> None:
         """Subscribes to task added events."""
-        self._on_task_added_callbacks.append(callback)
+        self.taskAdded.connect(callback)
 
     def subscribe_task_updated(
             self,
             callback: Callable[[GenerationTask], None]
     ) -> None:
         """Subscribes to task updated events."""
-        self._on_task_updated_callbacks.append(callback)
+        self.taskUpdated.connect(callback)
 
     def subscribe_status_changed(
             self,
             callback: Callable[[bool], None]
     ) -> None:
         """Subscribes to queue activity status changes."""
-        self._on_status_changed_callbacks.append(callback)
+        self.statusChanged.connect(callback)
 
     def _notify_task_updated(
             self,
             task: GenerationTask
     ) -> None:
         """Notifies all subscribers about task updates."""
-        for callback in self._on_task_updated_callbacks:
-            callback(task)
+        self.taskUpdated.emit(task)

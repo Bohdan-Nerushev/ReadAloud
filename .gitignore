@@ -35,3 +35,6 @@ builds/
 build/
 dist/
 *.egg-info/
+
+# Generated user data and application output
+data/

@@ -7,7 +7,6 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from src.domain.models import GenerationTask, AudioChunk, ProjectConfig
 from src.domain.audio_generator import AudioGenerator
 from src.infrastructure.thread_manager import ThreadManager
-from src.infrastructure.retry_handler import RetryHandler
 from src.infrastructure.progress_tracker import ProgressTracker
 from src.infrastructure.logging_config import set_correlation_id
 
@@ -28,15 +27,13 @@ class GenerationService(QObject):
 
     def __init__(
         self,
-        audio_generator: AudioGenerator,
-        retry_handler: RetryHandler
+        audio_generator: AudioGenerator
     ) -> None:
         """
         Initialize the GenerationService.
         """
         super().__init__()
         self._audio_generator = audio_generator
-        self._retry_handler = retry_handler
         
         self._thread_manager: Optional[ThreadManager] = None
         self._progress_tracker: Optional[ProgressTracker] = None
@@ -65,7 +62,7 @@ class GenerationService(QObject):
         if self._thread_manager:
             self._thread_manager.stop()
             
-        self._thread_manager = ThreadManager(thread_count=1)
+        self._thread_manager = ThreadManager(thread_count=task.config.thread_count)
         self._thread_manager.start()
 
         self._progress_tracker = ProgressTracker(total_chunks=len(chunks))
@@ -151,7 +148,6 @@ class GenerationService(QObject):
         """Updates tracker and emits progress."""
         if self._progress_tracker:
             self._progress_tracker.update_progress(success)
-            pass
 
     def get_progress_info(self) -> tuple[int, int, str, float]:
         """Returns (processed, total, eta_string, chunks_per_second)."""

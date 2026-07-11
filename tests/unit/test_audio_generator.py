@@ -27,9 +27,7 @@ class TestAudioGenerator(unittest.TestCase):
 
     def tearDown(self):
         self.patcher.stop()
-        # Clean up the background loop if possible, though AudioGenerator runs it as daemon
-        if self.generator._loop.is_running():
-            self.generator._loop.call_soon_threadsafe(self.generator._loop.stop)
+        self.generator.close()
 
     def test_voice_mapping_coverage(self):
         """test_voice_mapping_coverage: Verifies mapping existence for all supported languages (en, uk, de, ru)."""

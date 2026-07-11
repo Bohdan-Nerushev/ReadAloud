@@ -212,3 +212,15 @@ class AudioGenerator:
         except Exception:
             return 0.0
 
+    def close(self) -> None:
+        """Stops and closes the background asyncio event loop."""
+        if hasattr(self, '_loop') and self._loop:
+            if self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            if hasattr(self, '_loop_thread') and self._loop_thread.is_alive():
+                self._loop_thread.join(timeout=2.0)
+            try:
+                self._loop.close()
+            except Exception as e:
+                logging.warning(f"Error closing AudioGenerator event loop: {e}")
+

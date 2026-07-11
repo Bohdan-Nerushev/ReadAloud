@@ -40,7 +40,7 @@ class PersistenceService:
 
             return self._parse_tasks(data)
         except Exception as e:
-            logging.error(f"Failed to load state: {e}", exc_info=True)
+            logging.warning(f"Failed to load state: {e}")
             self._handle_corrupted()
             return []
 

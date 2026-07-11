@@ -128,19 +128,28 @@ class PreparationWorker(QThread):
             audio_dir = self.file_manager.create_timestamped_dir("audio", workspace_dir)
             
             # Save chunks in parallel using ThreadPoolExecutor for faster I/O
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            executor = ThreadPoolExecutor(max_workers=4)
+            interrupted = False
+            try:
                 futures = []
                 for chunk in chunks:
                     if self.isInterruptionRequested():
+                        interrupted = True
                         break
                     futures.append(executor.submit(self.file_manager.save_text_chunk, chunk, text_dir))
                 
-                # Wait for all saving operations to complete
-                for future in futures:
-                    if self.isInterruptionRequested():
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        return
-                    future.result()
+                if not interrupted:
+                    # Wait for all saving operations to complete
+                    for future in futures:
+                        if self.isInterruptionRequested():
+                            interrupted = True
+                            break
+                        future.result()
+            finally:
+                if interrupted:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                else:
+                    executor.shutdown(wait=True)
 
             if self.isInterruptionRequested():
                 return
@@ -561,7 +570,7 @@ class ApplicationController(QObject):
         self._is_stopped = True
         logging.info("Stopping all generation tasks...")
 
-        self. _terminate_prep_worker()
+        self._terminate_prep_worker()
         self._generation_service.stop()
         self._assembly_service.stop()
         
@@ -617,8 +626,7 @@ class ApplicationController(QObject):
                 first_task.status = TaskStatus.PAUSED
                 first_task.message = "Paused"
                 self._queue_service._current_task = first_task
-                for callback in self._queue_service._on_status_changed_callbacks:
-                    callback(True)
+                self._queue_service.statusChanged.emit(True)
                 self.taskAdded.emit(first_task)
                 self.taskUpdated.emit(first_task)
                 

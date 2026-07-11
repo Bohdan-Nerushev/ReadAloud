@@ -22,8 +22,7 @@ from src.domain.models import GenerationTask, AudioChunk, ProjectConfig
 class TestGenerationService(unittest.TestCase):
     def setUp(self):
         self.mock_generator = MagicMock()
-        self.mock_retry_handler = MagicMock()
-        self.service = GenerationService(self.mock_generator, self.mock_retry_handler)
+        self.service = GenerationService(self.mock_generator)
         
         # Mock Path validation again
         self.path_patcher = patch('src.domain.models.Path')

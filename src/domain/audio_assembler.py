@@ -10,6 +10,8 @@ import signal
 import logging
 import uuid
 import threading
+import re
+import time
 from pathlib import Path
 from typing import Set, List, Optional
 
@@ -158,8 +160,6 @@ class AudioAssembler:
         speed: float, 
         callback: callable
     ) -> None:
-        import re
-        import time
         start_time = time.time()
         time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)")
 

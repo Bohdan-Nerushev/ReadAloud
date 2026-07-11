@@ -13,11 +13,11 @@ echo "------------------------------------------------"
 # Ensure we are in the project root
 cd "$(dirname "$0")/.."
 
-# Running experiments to see if python3 -m unittest discover works
-# but for maximum reliability we list the main test files.
+# Tests are listed explicitly to ensure deterministic execution order
+# and prevent accidental discovery of non-test utility scripts.
 
 echo "📦 Running core test suite..."
-PYTHONPATH=. ./venv/bin/python3 -m unittest \
+PYTHONPATH=. ./venv/bin/python3 -m unittest -v \
     tests/unit/test_queue_service.py \
     tests/unit/test_generation_service.py \
     tests/unit/test_assembly_service.py \
@@ -28,12 +28,18 @@ PYTHONPATH=. ./venv/bin/python3 -m unittest \
     tests/unit/test_thread_manager.py \
     tests/unit/test_audio_generator.py \
     tests/unit/test_app_controller.py \
+    tests/unit/test_audio_assembler.py \
+    tests/unit/test_persistence_service.py \
+    tests/test_queue.py \
+    tests/test_persistence_integration.py \
+    tests/test_optimization.py \
+    tests/stress_test_large_file.py \
     tests/test_integration.py \
     tests/test_concurrency.py \
     tests/test_gui.py
 
 echo "📦 Running GUI logic suite (offscreen)..."
-PYTHONPATH=. QT_QPA_PLATFORM=offscreen ./venv/bin/python3 tests/unit/test_gui_logic.py
+PYTHONPATH=. QT_QPA_PLATFORM=offscreen ./venv/bin/python3 tests/unit/test_gui_logic.py -v
 
 echo ""
 echo "------------------------------------------------"

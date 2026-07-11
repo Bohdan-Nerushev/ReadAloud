@@ -6,17 +6,18 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 
 1. [🛠 System Requirements](#1-system-requirements)
 2. [Installation & Setup](#2-installation-setup)
-   1. [One-line Installation](#21-one-line-installation)
-   2. [Manual Installation](#22-manual-installation-alternative)
-   3. [Uninstallation](#23-uninstallation)
+   - [One-line Installation](#21-one-line-installation)
+   - [Manual Installation](#22-manual-installation-alternative)
+   - [Uninstallation](#23-uninstallation)
 3. [Usage](#3-usage)
-   1. [Starting the Application](#31-starting-the-application)
-   2. [Running Tests](#32-running-tests)
+   - [Starting the Application](#31-starting-the-application)
+   - [Running Tests](#32-running-tests)
 
 ## 1. 🛠 System Requirements
 
 - **Python**: 3.12 or higher
 - **FFmpeg**: Essential for audio stream assembly and speed adjustments.
+- **libxcb-cursor**: Required for GUI cursor management.
 - **OS**: Linux (was tested on Ubuntu).
 
 ---

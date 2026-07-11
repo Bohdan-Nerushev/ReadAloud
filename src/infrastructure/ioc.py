@@ -5,10 +5,10 @@ This module provides a container for managing application dependencies,
 centralizing object creation and wiring.
 """
 
+from pathlib import Path
 from typing import Optional
 
 from src.infrastructure.file_manager import FileManager
-from src.infrastructure.retry_handler import RetryHandler
 from src.infrastructure.thread_manager import ThreadManager
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
@@ -34,7 +34,6 @@ class Container:
         self._audio_generator: Optional[AudioGenerator] = None
         self._audio_assembler: Optional[AudioAssembler] = None
         self._file_manager: Optional[FileManager] = None
-        self._retry_handler: Optional[RetryHandler] = None
         
         self._generation_service: Optional[GenerationService] = None
         self._assembly_service: Optional[AssemblyService] = None
@@ -79,17 +78,10 @@ class Container:
         return self._file_manager
 
     @property
-    def retry_handler(self) -> RetryHandler:
-        if not self._retry_handler:
-            self._retry_handler = RetryHandler()
-        return self._retry_handler
-
-    @property
     def generation_service(self) -> GenerationService:
         if not self._generation_service:
             self._generation_service = GenerationService(
-                audio_generator=self.audio_generator,
-                retry_handler=self.retry_handler
+                audio_generator=self.audio_generator
             )
         return self._generation_service
 
@@ -104,8 +96,6 @@ class Container:
     @property
     def persistence_service(self) -> PersistenceService:
         if not self._persistence_service:
-            from pathlib import Path
-            from src.application.services.persistence_service import PersistenceService
             project_root = Path(__file__).parent.parent.parent
             state_file = project_root / ".data" / "state.json"
             self._persistence_service = PersistenceService(str(state_file.absolute()))

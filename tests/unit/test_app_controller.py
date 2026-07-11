@@ -15,6 +15,8 @@ class MockQThread(MockQObject):
     error = MagicMock()
     def start(self): pass
     def terminate(self): pass
+    def wait(self, *args): pass
+    def isRunning(self): return False
 def mock_signal(*args):
     s = MagicMock()
     s.connect = MagicMock()
@@ -131,6 +133,19 @@ class TestAppController(unittest.TestCase):
         # Use a real signal behavior mock if possible or just check emit call
         self.controller._initialize_task_state(self.task_1)
         self.controller.progressUpdated.emit.assert_called_with(0, 0, "Preparing...", 0.0)
+
+    def test_restore_state_active_task(self):
+        """test_restore_state_active_task: Verifies restore_state handles active tasks and emits statusChanged."""
+        self.task_1.status = TaskStatus.PROCESSING
+        self.controller._persistence_service.load_state.return_value = [self.task_1]
+        
+        mock_signal = MagicMock()
+        self.queue_service.statusChanged = mock_signal
+        
+        self.controller.restore_state()
+        
+        mock_signal.emit.assert_called_once_with(True)
+        self.assertEqual(self.task_1.status, TaskStatus.PAUSED)
 
 if __name__ == '__main__':
     unittest.main()
