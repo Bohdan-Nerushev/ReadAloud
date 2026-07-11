@@ -5,6 +5,7 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 <p align="center">
   <img src="docs/video_instructions/recording.gif" alt="ReadAloud Usage Demo" width="600" />
 </p>
+
 ## Table of Contents
 
 1. [🛠 System Requirements](#1-system-requirements)
