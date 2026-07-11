@@ -34,7 +34,7 @@ You can install the application automatically in one command using the remote in
 
 **Using wget:**
 ```bash
-wget --no-check-certificate -O install.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/install.sh?ref_type=heads"
+wget --no-check-certificate -O install.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/scripts/install.sh?ref_type=heads"
 bash install.sh
 ```
 
@@ -78,7 +78,7 @@ If you wish to uninstall ReadAloud, you can download and run the remote uninstal
 
 **Using wget:**
 ```bash
-wget --no-check-certificate -O uninstall.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/uninstall.sh?ref_type=heads"
+wget --no-check-certificate -O uninstall.sh "https://git.mam.dev/bnerushev/readaloud/-/raw/master/scripts/uninstall.sh?ref_type=heads"
 bash uninstall.sh
 ```
 
@@ -88,13 +88,13 @@ This will automatically clean up the program files, remove the desktop shortcut,
 
 ### Starting the Application
 ```bash
-./start.sh
+./scripts/start.sh
 ```
 
 ### Running Tests
 To execute the comprehensive test suite (unit, integration, concurrency, and UI tests):
 ```bash
-./run_tests.sh
+./scripts/run_tests.sh
 ```
 
 ### Configuration Parameters

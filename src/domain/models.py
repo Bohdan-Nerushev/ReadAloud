@@ -203,6 +203,9 @@ class GenerationTask:
     created_at: datetime = field(
         default_factory=datetime.now
     )
+    text_dir: Optional[str] = None
+    audio_dir: Optional[str] = None
+
 
     def update_status(
             self,

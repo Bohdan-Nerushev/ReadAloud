@@ -1,6 +1,9 @@
 #!/bin/bash
 # Quick start script for ReadAloud application
 
+# Change to project root directory
+cd "$(dirname "$0")/.." || exit 1
+
 echo "========================================"
 echo "ReadAloud - Text to Speech Application"
 echo "========================================"

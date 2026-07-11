@@ -76,8 +76,10 @@ class TestAppController(unittest.TestCase):
             text_chunker=self.text_chunker,
             file_manager=self.file_manager,
             generation_service=self.generation_service,
-            assembly_service=self.assembly_service
+            assembly_service=self.assembly_service,
+            persistence_service=MagicMock()
         )
+
 
     def tearDown(self):
         self.patcher_exists.stop()

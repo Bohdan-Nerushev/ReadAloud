@@ -44,12 +44,14 @@ class ProgressTracker:
         self._max_recent_timings = 30
         self._lock: threading.Lock = threading.Lock()
     
-    def start(self) -> None:
+    def start(self, completed_chunks: int = 0) -> None:
         """Records the start time for progress tracking."""
         with self._lock:
             self._start_time = datetime.now()
             self._total_paused_duration = timedelta()
             self._recent_timings = []
+            self._completed_chunks = completed_chunks
+
 
     def pause(self) -> None:
         """Records the start of a pause period."""

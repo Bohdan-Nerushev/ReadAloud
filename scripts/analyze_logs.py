@@ -110,7 +110,8 @@ class CliInterface:
     @staticmethod
     def parse_args():
         parser = argparse.ArgumentParser(description="Analyze ReadAloud log generation speed.")
-        parser.add_argument("--log", type=str, default="/home/bnerushev/PycharmProjects/ReadAloud/logs/app.log",
+        default_log_path = str(Path(__file__).resolve().parent.parent / "logs" / "app.log")
+        parser.add_argument("--log", type=str, default=default_log_path,
                             help="Path to the log file")
         parser.add_argument("--start", type=str, help="Start time (YYYY-MM-DD HH:MM:SS)")
         parser.add_argument("--end", type=str, help="End time (YYYY-MM-DD HH:MM:SS)")

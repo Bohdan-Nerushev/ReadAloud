@@ -65,37 +65,51 @@ class GenerationService(QObject):
         if self._thread_manager:
             self._thread_manager.stop()
             
-        self._thread_manager = ThreadManager(thread_count=task.config.thread_count)
+        self._thread_manager = ThreadManager(thread_count=1)
         self._thread_manager.start()
 
         self._progress_tracker = ProgressTracker(total_chunks=len(chunks))
-        self._progress_tracker.start()
+        completed_count = sum(1 for c in chunks if c.audio_file_path is not None)
+        self._progress_tracker.start(completed_chunks=completed_count)
         
         self._submit_chunks_to_threads()
 
     def _submit_chunks_to_threads(self) -> None:
-        """Submits chunks in batches."""
+        """Submits chunks in batches sequentially."""
         if not self._current_task:
             return
 
         correlation_id = str(self._current_task.id)
 
-        for i in range(0, len(self._chunks), self.BATCH_GEN_SIZE):
-            batch = self._chunks[i:i + self.BATCH_GEN_SIZE]
+        pending_chunks = [c for c in self._chunks if c.audio_file_path is None]
+        max_workers = min(self._current_task.config.thread_count, 10)
+
+        for i in range(0, len(pending_chunks), self.BATCH_GEN_SIZE):
+            batch = pending_chunks[i:i + self.BATCH_GEN_SIZE]
             self._thread_manager.submit_task(
                 self._generate_batch_safe,
                 batch,
                 self._current_task.config.language,
                 self._current_task.config.gender,
-                correlation_id
+                correlation_id,
+                max_workers
             )
+
+    def _on_chunk_generated_callback(self, chunk_number: int, file_path: str, duration: float) -> None:
+        """Callback from AudioGenerator when a single chunk is generated."""
+        if self._is_stopped:
+            return
+        logging.debug(f"Chunk {chunk_number} generated: {file_path} ({duration}s)")
+        self.chunkGenerated.emit(chunk_number, file_path, duration)
+        self._update_internal_progress(success=True)
 
     def _generate_batch_safe(
         self,
         batch: List[AudioChunk],
         language: str,
         gender: str,
-        correlation_id: str
+        correlation_id: str,
+        max_workers: int
     ) -> None:
         """
         Executed by worker thread. Generates audio for a batch.
@@ -107,15 +121,13 @@ class GenerationService(QObject):
         set_correlation_id(correlation_id)
 
         try:
-            # Wrapped call to include rate limiting internally in the loop thread
-            results = self._retry_handler.execute_with_retry(
-                self._execute_batch_with_semaphore,
+            results = self._audio_generator.generate_audio_batch(
                 batch,
                 language,
                 gender,
                 self._output_dir,
-                max_retries=5,
-                backoff=2.0
+                chunk_callback=self._on_chunk_generated_callback,
+                max_workers=max_workers
             )
             
             batch_results = []
@@ -124,12 +136,7 @@ class GenerationService(QObject):
                 if self._is_stopped: 
                     break
                 file_path, duration = results[i]
-                logging.debug(f"Chunk {chunk.chunk_number} generated: {file_path} ({duration}s)")
-                
-                # We emit individual signals and a batch signal for reliability
-                self.chunkGenerated.emit(chunk.chunk_number, file_path, duration)
                 batch_results.append((chunk.chunk_number, file_path, duration))
-                self._update_internal_progress(success=True)
             
             if not self._is_stopped:
                 self.batchGenerated.emit(batch_results)
@@ -139,45 +146,6 @@ class GenerationService(QObject):
             self.batchFailed.emit(batch, str(e))
             for _ in batch:
                 self._update_internal_progress(success=False)
-
-    def _execute_batch_with_semaphore(
-        self,
-        batch: List[AudioChunk],
-        language: str,
-        gender: str,
-        output_dir: str
-    ) -> List[str]:
-        """
-        Execution wrapper that respects the rate-limiting semaphore.
-        """
-        # Note: AudioGenerator.generate_audio_batch uses asyncio internally.
-        # We wrap it to ensure we don't spam the API.
-        
-        async def _limited_generate() -> List[str]:
-            # Use the global semaphore to limit concurrent requests to Edge TTS
-            async with self._semaphore:
-                return await self._audio_generator.generate_audio_batch(
-                    batch,
-                    language,
-                    gender,
-                    output_dir
-                )
-
-        # This runs in a worker thread, but AudioGenerator manages its own loop.
-        # generate_audio_batch is already thread-safe.
-        # But we want to wait on the semaphore.
-        # Let's modify AudioGenerator to accept the semaphore OR handle it here.
-        # Handling it here is better for service-level control.
-        # Wait, translate: generate_audio_batch is synchronous return but uses loop internally.
-        # I'll just call it directly since AudioGenerator.generate_audio_batch 
-        # already uses asyncio.run_coroutine_threadsafe.
-        
-        return self._audio_generator.generate_audio_batch(
-            batch, 
-            language, 
-            gender, 
-            output_dir
-        )
 
     def _update_internal_progress(self, success: bool) -> None:
         """Updates tracker and emits progress."""

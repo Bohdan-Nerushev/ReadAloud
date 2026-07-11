@@ -92,15 +92,55 @@ class AudioGenerator:
         )
         return results[0]
 
+    async def _generate_one_with_retry(
+        self,
+        chunk: AudioChunk,
+        voice: str,
+        output_path: Path,
+        max_retries: int = 5,
+        backoff: float = 2.0
+    ) -> tuple[str, float]:
+        """Generates audio for a single chunk with exponential backoff retry logic."""
+        last_exception = None
+        for attempt in range(max_retries):
+            try:
+                audio_path = output_path / f"{chunk.chunk_number}.mp3"
+                communicate = self.edge_tts.Communicate(chunk.text_content, voice)
+                
+                async with self._semaphore:
+                    try:
+                        await asyncio.wait_for(communicate.save(str(audio_path)), timeout=60)
+                    except asyncio.TimeoutError as e:
+                        logging.error(f"Timeout while generating audio for chunk {chunk.chunk_number}")
+                        raise Exception(f"Timeout while generating audio for chunk {chunk.chunk_number}") from e
+                    
+                    duration = self._get_file_duration_fast(str(audio_path))
+                
+                return str(audio_path.absolute()), duration
+            except Exception as e:
+                last_exception = e
+                logging.warning(
+                    f"Attempt {attempt + 1}/{max_retries} failed for chunk {chunk.chunk_number}: {e}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(backoff * (2 ** attempt))
+        
+        raise last_exception
+
     def generate_audio_batch(
             self,
             chunks: List[AudioChunk],
             language: str,
             gender: str,
-            output_dir: str
+            output_dir: str,
+            chunk_callback: Optional[Any] = None,
+            max_workers: int = 5,
+            max_retries: int = 5,
+            backoff: float = 2.0
     ) -> List[tuple[str, float]]:
         """
-        Generates multiple audio files from text chunks concurrently with rate limiting.
+        Generates multiple audio files from text chunks concurrently with rate limiting and retry.
+        Uses asyncio.Queue and an internal worker pool to avoid thundering herd.
         """
         if not chunks:
             return []
@@ -113,35 +153,49 @@ class AudioGenerator:
         
         output_path = Path(output_dir)
 
-        async def _generate_one(c: AudioChunk) -> tuple[str, float]:
-            audio_path = output_path / f"{c.chunk_number}.mp3"
-            communicate = self.edge_tts.Communicate(c.text_content, voice)
+        async def _generate_all_with_queue() -> List[tuple[str, float]]:
+            queue = asyncio.Queue()
+            for idx, c in enumerate(chunks):
+                await queue.put((idx, c))
+                
+            results = [None] * len(chunks)
+            num_workers = min(max_workers, len(chunks))
             
-            # Use the internal semaphore to limit concurrent API requests
-            async with self._semaphore:
-                # Edge TTS Communicate has no direct way to get duration before saving
-                # but we can try to estimate or use ffprobe quickly here once?
-                # Actually, edge_tts.Communicate.save() doesn't return anything.
-                # Let's use mutagen after save.
-                try:
-                    await asyncio.wait_for(communicate.save(str(audio_path)), timeout=60)
-                except asyncio.TimeoutError:
-                    logging.error(f"Timeout while generating audio for chunk {c.chunk_number}")
-                    raise Exception(f"Timeout while generating audio for chunk {c.chunk_number}")
-                
-                # Fast duration extraction
-                duration = self._get_file_duration_fast(str(audio_path))
-                
-            return str(audio_path.absolute()), duration
-
-        async def _generate_all() -> List[tuple[str, float]]:
-            return await asyncio.gather(
-                *[_generate_one(c) for c in chunks]
-            )
+            async def worker():
+                while not queue.empty():
+                    try:
+                        idx, chunk = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                        
+                    try:
+                        res = await self._generate_one_with_retry(
+                            chunk, voice, output_path,
+                            max_retries=max_retries,
+                            backoff=backoff
+                        )
+                        results[idx] = res
+                        if chunk_callback:
+                            try:
+                                chunk_callback(chunk.chunk_number, res[0], res[1])
+                            except Exception as cb_err:
+                                logging.error(f"Error in chunk callback: {cb_err}")
+                    except Exception as e:
+                        results[idx] = e
+                    finally:
+                        queue.task_done()
+                        
+            workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
+            await asyncio.gather(*workers)
+            
+            for res in results:
+                if isinstance(res, Exception):
+                    raise res
+            return results
 
         try:
             future = asyncio.run_coroutine_threadsafe(
-                _generate_all(), 
+                _generate_all_with_queue(), 
                 self._loop
             )
             return future.result()

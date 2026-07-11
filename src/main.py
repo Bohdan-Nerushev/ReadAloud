@@ -190,8 +190,11 @@ def main() -> None:
         window = MainWindow()
         coordinator = ReadAloudApplication(window, controller)
 
-        app.aboutToQuit.connect(controller.stop_generation)
+        controller.restore_state()
+
+        app.aboutToQuit.connect(controller.shutdown)
         window.show()
+
 
         sys.exit(app.exec())
     except Exception as e:

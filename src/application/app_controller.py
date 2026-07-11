@@ -17,11 +17,14 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
 from src.domain.models import ProjectConfig, AudioChunk, GenerationTask, TaskStatus
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
+import os
 from src.infrastructure.file_manager import FileManager
 from src.application.services.queue_service import QueueService
 from src.application.services.generation_service import GenerationService
 from src.application.services.assembly_service import AssemblyService
+from src.application.services.persistence_service import PersistenceService
 from src.infrastructure.logging_config import set_correlation_id
+
 
 
 
@@ -173,7 +176,8 @@ class ApplicationController(QObject):
             text_chunker: TextChunker,
             file_manager: FileManager,
             generation_service: GenerationService,
-            assembly_service: AssemblyService
+            assembly_service: AssemblyService,
+            persistence_service: PersistenceService
     ) -> None:
         """Initialize the ApplicationController."""
         super().__init__()
@@ -186,6 +190,8 @@ class ApplicationController(QObject):
         # Injected Services
         self._generation_service = generation_service
         self._assembly_service = assembly_service
+        self._persistence_service = persistence_service
+
 
         self._prep_worker: Optional[PreparationWorker] = None
 
@@ -209,8 +215,11 @@ class ApplicationController(QObject):
     def _setup_service_subscriptions(self) -> None:
         """Sets up subscriptions to queue service events."""
         self._queue_service.subscribe_task_added(self.taskAdded.emit)
+        self._queue_service.subscribe_task_added(lambda task: self._save_state())
         self._queue_service.subscribe_task_updated(self.taskUpdated.emit)
+        self._queue_service.subscribe_task_updated(lambda task: self._save_state())
         self._queue_service.subscribe_status_changed(self.queueStatusChanged.emit)
+
 
     def _setup_internal_connections(self) -> None:
         """Sets up connections from generation and assembly services."""
@@ -248,6 +257,16 @@ class ApplicationController(QObject):
             
             logging.info(f"Starting task: {task.id} ({task.config.project_name})")
 
+            self._is_stopped = False
+            self.progressUpdated.emit(0, 0, "Preparing...", 0.0)
+
+            if task.text_dir and task.audio_dir and os.path.isdir(task.text_dir) and os.path.isdir(task.audio_dir):
+                logging.info(f"Restoring task progress from disk directories: {task.text_dir}, {task.audio_dir}")
+                restored = self._restore_progress_from_disk(task)
+                if restored:
+                    return True
+                logging.warning("Failed to restore progress from disk, falling back to clean preparation.")
+
             self._initialize_task_state(task)
             self._start_preparation_worker(task)
             return True
@@ -255,6 +274,7 @@ class ApplicationController(QObject):
             logging.error(f"Failed to start task: {e}", exc_info=True)
             self._handle_task_failure(f"Failed to start: {str(e)}")
             return False
+
 
 
     def _initialize_task_state(self, task: GenerationTask) -> None:
@@ -304,11 +324,18 @@ class ApplicationController(QObject):
             # Reset assembly service
             self._assembly_service.reset(len(chunks))
 
-            logging.info(f"Preparation finished for task {self._get_current_task().id if self._get_current_task() else 'unknown'}. Chunks: {len(chunks)}")
+            task = self._get_current_task()
+            if task:
+                task.text_dir = text_dir
+                task.audio_dir = audio_dir
+                self._save_state()
+
+            logging.info(f"Preparation finished for task {task.id if task else 'unknown'}. Chunks: {len(chunks)}")
             self._start_generation_process()
         except Exception as e:
             logging.error(f"Error after preparation: {e}", exc_info=True)
             self.errorOccurred.emit(f"System error after preparation: {e}")
+
 
     def _on_preparation_error(self, error_msg: str) -> None:
         """Called when preparation worker fails."""
@@ -499,6 +526,12 @@ class ApplicationController(QObject):
 
     def pause_generation(self) -> None:
         """Pauses the ongoing audio generation."""
+        task = self._get_current_task()
+        if task and task.status == TaskStatus.PAUSED:
+            if not self._generation_service._thread_manager:
+                self._start_task(task)
+                return
+
         is_paused = self._generation_service.pause()
         if is_paused:
             self._queue_service.update_task_status(TaskStatus.PAUSED, "Paused")
@@ -506,6 +539,22 @@ class ApplicationController(QObject):
         else:
             self._queue_service.update_task_status(TaskStatus.PROCESSING, "Resumed")
             logging.info("Generation resumed")
+
+    def shutdown(self) -> None:
+        """Gracefully stops ongoing processing and saves queue state for next run."""
+        logging.info("Shutting down ApplicationController...")
+        self._is_stopped = True
+        self._terminate_prep_worker()
+        self._cleanup_active_resources()
+        self._generation_service.stop()
+        self._assembly_service.stop()
+        
+        current_task = self._get_current_task()
+        if current_task and current_task.status in [TaskStatus.PROCESSING, TaskStatus.PAUSED]:
+            current_task.status = TaskStatus.PAUSED
+            current_task.message = "Paused"
+            
+        self._save_state()
 
     def stop_generation(self) -> None:
         """Stops the audio generation for all tasks and cleans up."""
@@ -518,6 +567,7 @@ class ApplicationController(QObject):
         
         self._queue_service.clear_all_tasks()
         self._cleanup_temp_files()
+        self._save_state()
         self._finalize_task()
 
     def cancel_task(self, task_id: str) -> None:
@@ -528,6 +578,7 @@ class ApplicationController(QObject):
         else:
             logging.info(f"Cancelling queued task: {task_id}")
             self._queue_service.remove_task(task_id)
+            self._save_state()
             self._emit_global_progress()
 
     def _handle_task_failure(self, error_msg: str) -> None:
@@ -540,8 +591,136 @@ class ApplicationController(QObject):
         """Clean up current task and process next."""
         self._queue_service.finalize_current_task()
         self._cleanup_active_resources()
+        self._save_state()
         self._process_queue()
         self._emit_global_progress()
+
+    def _save_state(self) -> None:
+        """Saves current queue state to persistence."""
+        try:
+            tasks = self._queue_service.get_all_tasks()
+            self._persistence_service.save_state(tasks)
+        except Exception as e:
+            logging.error(f"Failed to auto-save state: {e}", exc_info=True)
+
+    def restore_state(self) -> None:
+        """Restores queue state from persistence."""
+        try:
+            tasks = self._persistence_service.load_state()
+            if not tasks:
+                return
+
+            logging.info(f"Restoring {len(tasks)} tasks from saved state.")
+            
+            first_task = tasks[0]
+            if first_task.status in [TaskStatus.PROCESSING, TaskStatus.PAUSED]:
+                first_task.status = TaskStatus.PAUSED
+                first_task.message = "Paused"
+                self._queue_service._current_task = first_task
+                for callback in self._queue_service._on_status_changed_callbacks:
+                    callback(True)
+                self.taskAdded.emit(first_task)
+                self.taskUpdated.emit(first_task)
+                
+                for task in tasks[1:]:
+                    task.status = TaskStatus.PENDING
+                    task.message = "Waiting..."
+                    self._queue_service._task_queue.append(task)
+                    self.taskAdded.emit(task)
+            else:
+                for task in tasks:
+                    task.status = TaskStatus.PENDING
+                    task.message = "Waiting..."
+                    self._queue_service._task_queue.append(task)
+                    self.taskAdded.emit(task)
+            
+            self._emit_global_progress()
+        except Exception as e:
+            logging.error(f"Error restoring state: {e}", exc_info=True)
+
+    def _restore_progress_from_disk(self, task: GenerationTask) -> bool:
+        """Attempts to restore task chunks and progress from physical files on disk."""
+        try:
+            text_path = Path(task.text_dir)
+            audio_path = Path(task.audio_dir)
+            
+            txt_files = list(text_path.glob("*.txt"))
+            if not txt_files:
+                return False
+                
+            chunks_data = []
+            for f in txt_files:
+                try:
+                    num = int(f.stem)
+                    chunks_data.append((num, f))
+                except ValueError:
+                    continue
+            
+            if not chunks_data:
+                return False
+                
+            chunks_data.sort(key=lambda x: x[0])
+            
+            chunks = []
+            for num, f in chunks_data:
+                try:
+                    with open(f, "r", encoding="utf-8") as file:
+                        content = file.read()
+                    chunks.append(AudioChunk(
+                        chunk_number=num,
+                        text_content=content,
+                        text_file_path=str(f.absolute())
+                    ))
+                except Exception as e:
+                    logging.error(f"Failed to read restored chunk file {f}: {e}")
+                    return False
+            
+            self._chunks = chunks
+            self._text_dir = task.text_dir
+            self._audio_dir = task.audio_dir
+            self._audio_files = [None] * len(chunks)
+            
+            self._assembly_service.reset(len(chunks))
+            
+            for idx, c in enumerate(self._chunks):
+                chunk_audio = audio_path / f"{c.chunk_number}.mp3"
+                if chunk_audio.exists() and chunk_audio.stat().st_size > 0:
+                    duration = self._generation_service._audio_generator._get_file_duration_fast(str(chunk_audio))
+                    self._audio_files[idx] = str(chunk_audio.absolute())
+                    self._chunks[idx] = c.with_audio_path(str(chunk_audio.absolute()), duration)
+                    
+                    batch_index = self._assembly_service.mark_chunk_ready(idx, duration)
+                    if batch_index is not None:
+                        part_path = audio_path / f"part_{batch_index}.mp3"
+                        if part_path.exists() and part_path.stat().st_size > 0:
+                            with self._assembly_service._state_lock:
+                                self._assembly_service._batch_results[batch_index] = str(part_path)
+                                self._assembly_service._batch_submitted.add(batch_index)
+                            logging.info(f"Restoring assembled batch part {batch_index} from disk.")
+                        else:
+                            start_idx = batch_index * self._assembly_service.BATCH_SIZE
+                            end_idx = min(start_idx + self._assembly_service.BATCH_SIZE, len(self._audio_files))
+                            batch_files = self._audio_files[start_idx:end_idx]
+                            self._assembly_service.submit_batch_by_index(
+                                batch_index,
+                                batch_files,
+                                self._audio_dir,
+                                task.config.speed,
+                                str(task.id)
+                            )
+            
+            logging.info(f"Restored task progress: {sum(1 for f in self._audio_files if f is not None)}/{len(chunks)} chunks ready.")
+            
+            self._queue_service.update_task_status(
+                TaskStatus.PROCESSING,
+                "Resuming..."
+            )
+            self._start_generation_process()
+            return True
+        except Exception as e:
+            logging.error(f"Failed to restore task progress from disk: {e}", exc_info=True)
+            return False
+
 
     def _cleanup_active_resources(self) -> None:
         """Stops timers and resets state."""

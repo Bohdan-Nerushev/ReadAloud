@@ -89,8 +89,10 @@ class TestIntegration(unittest.TestCase):
             text_chunker, 
             file_manager, 
             generation_service, 
-            assembly_service
+            assembly_service,
+            MagicMock()
         )
+
         
         # Setup dummy config
         dummy_input = Path(self.temp_dir) / "input.txt"

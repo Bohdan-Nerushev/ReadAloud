@@ -90,8 +90,10 @@ class TestConcurrency(unittest.TestCase):
             MagicMock(),
             MagicMock(),
             mock_gen_service,
-            mock_asm_service
+            mock_asm_service,
+            MagicMock()
         )
+
         
         # Start a task - mock start_task to avoid threads
         with patch.object(controller, '_start_task', return_value=True):

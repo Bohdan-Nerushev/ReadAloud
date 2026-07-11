@@ -74,9 +74,11 @@ class TestAudioGenerator(unittest.TestCase):
         """test_generate_audio_batch_failure_handling: Перевіряє коректну обробку помилок API."""
         self.mock_instance.save.side_effect = Exception("API Error")
         chunk = AudioChunk(chunk_number=1, text_content="text")
-        
         with self.assertRaises(Exception) as cm:
-            self.generator.generate_audio_batch([chunk], "en", "male", "/tmp")
+            self.generator.generate_audio_batch(
+                [chunk], "en", "male", "/tmp",
+                max_retries=2, backoff=0.01
+            )
         self.assertIn("Batch generation failed", str(cm.exception))
 
 if __name__ == '__main__':

@@ -39,20 +39,37 @@ sys.modules['PyQt6.QtWidgets'] = MagicMock()
 
 from src.domain.models import ProjectConfig, GenerationTask, TaskStatus
 from src.application.app_controller import ApplicationController
+from src.application.services.queue_service import QueueService
 
 class TestQueueSystem(unittest.TestCase):
     def setUp(self):
-        self.controller = ApplicationController()
+        queue_service = QueueService()
+
+        text_processor = MagicMock()
+        text_chunker = MagicMock()
+        file_manager = MagicMock()
+        generation_service = MagicMock()
+        generation_service.get_progress_info.return_value = (0, 0, "", 0.0)
+        assembly_service = MagicMock()
+        persistence_service = MagicMock()
+
+        self.controller = ApplicationController(
+            queue_service=queue_service,
+            text_processor=text_processor,
+            text_chunker=text_chunker,
+            file_manager=file_manager,
+            generation_service=generation_service,
+            assembly_service=assembly_service,
+            persistence_service=persistence_service
+        )
+
+
         # Mock internal components to prevent actual execution logic
         self.controller._prep_worker = MagicMock()
-        self.controller._audio_generator = MagicMock()
-        self.controller._file_manager = MagicMock()
-        self.controller._text_processor = MagicMock()
-        self.controller._text_chunker = MagicMock()
         
         # Mock timers
         self.controller._progress_timer = MagicMock()
-        self.controller._completion_timer = MagicMock()
+        self.controller._completion_monitor_timer = MagicMock()
         
         # Create dummy files for validation
         self.test_file1 = Path("/tmp/test.txt")
@@ -71,6 +88,7 @@ class TestQueueSystem(unittest.TestCase):
             speed=1.0
         )
 
+
     def tearDown(self):
         if self.test_file1.exists():
             self.test_file1.unlink()
@@ -81,12 +99,13 @@ class TestQueueSystem(unittest.TestCase):
         print("\nTesting: Add task starts processing if idle")
         self.controller.add_task(self.config)
         
-        self.assertIsNotNone(self.controller._current_task)
-        self.assertEqual(self.controller._current_task.config.project_name, "TestProject")
-        self.assertEqual(self.controller._current_task.status, TaskStatus.PROCESSING)
+        self.assertIsNotNone(self.controller._queue_service._current_task)
+        self.assertEqual(self.controller._queue_service._current_task.config.project_name, "TestProject")
+        self.assertEqual(self.controller._queue_service._current_task.status, TaskStatus.PROCESSING)
         
         # Verify queue is empty (popped)
-        self.assertEqual(len(self.controller._task_queue), 0)
+        self.assertEqual(len(self.controller._queue_service._task_queue), 0)
+
 
     def test_add_task_queues_if_busy(self):
         print("Testing: Add task queues if busy")
@@ -107,13 +126,14 @@ class TestQueueSystem(unittest.TestCase):
         self.controller.add_task(config2)
         
         # Verify first is still processing
-        self.assertEqual(self.controller._current_task.config.project_name, "TestProject")
+        self.assertEqual(self.controller._queue_service._current_task.config.project_name, "TestProject")
         
         # Verify second is in queue
-        self.assertEqual(len(self.controller._task_queue), 1)
-        queued_task = self.controller._task_queue[0]
+        self.assertEqual(len(self.controller._queue_service._task_queue), 1)
+        queued_task = self.controller._queue_service._task_queue[0]
         self.assertEqual(queued_task.config.project_name, "Project2")
         self.assertEqual(queued_task.status, TaskStatus.PENDING)
+
 
     def test_sequential_processing(self):
         print("Testing: Sequential processing")
@@ -138,9 +158,10 @@ class TestQueueSystem(unittest.TestCase):
             self.assertTrue(mock_process.called)
             
             # Now current task should be Project2
-            self.assertIsNotNone(self.controller._current_task)
-            self.assertEqual(self.controller._current_task.config.project_name, "Project2")
-            self.assertEqual(len(self.controller._task_queue), 0)
+            self.assertIsNotNone(self.controller._queue_service._current_task)
+            self.assertEqual(self.controller._queue_service._current_task.config.project_name, "Project2")
+            self.assertEqual(len(self.controller._queue_service._task_queue), 0)
+
 
     def test_stop_generation_handles_current_task(self):
         print("Testing: Stop generation logic")
@@ -153,7 +174,8 @@ class TestQueueSystem(unittest.TestCase):
         # So we can't check _current_task status unless we mock _finalize_task
         # But we can verify it called finalize
         
-        self.assertIsNone(self.controller._current_task)
+        self.assertIsNone(self.controller._queue_service._current_task)
+
 
 if __name__ == '__main__':
     unittest.main()

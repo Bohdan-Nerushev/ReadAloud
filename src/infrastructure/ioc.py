@@ -17,7 +17,9 @@ from src.domain.audio_assembler import AudioAssembler
 from src.application.services.queue_service import QueueService
 from src.application.services.generation_service import GenerationService
 from src.application.services.assembly_service import AssemblyService
+from src.application.services.persistence_service import PersistenceService
 from src.application.app_controller import ApplicationController
+
 
 
 class Container:
@@ -36,7 +38,9 @@ class Container:
         
         self._generation_service: Optional[GenerationService] = None
         self._assembly_service: Optional[AssemblyService] = None
+        self._persistence_service: Optional[PersistenceService] = None
         self._app_controller: Optional[ApplicationController] = None
+
 
     @property
     def queue_service(self) -> QueueService:
@@ -98,6 +102,16 @@ class Container:
         return self._assembly_service
 
     @property
+    def persistence_service(self) -> PersistenceService:
+        if not self._persistence_service:
+            from pathlib import Path
+            from src.application.services.persistence_service import PersistenceService
+            project_root = Path(__file__).parent.parent.parent
+            state_file = project_root / ".data" / "state.json"
+            self._persistence_service = PersistenceService(str(state_file.absolute()))
+        return self._persistence_service
+
+    @property
     def app_controller(self) -> ApplicationController:
         if not self._app_controller:
             self._app_controller = ApplicationController(
@@ -106,6 +120,8 @@ class Container:
                 text_chunker=self.text_chunker,
                 file_manager=self.file_manager,
                 generation_service=self.generation_service,
-                assembly_service=self.assembly_service
+                assembly_service=self.assembly_service,
+                persistence_service=self.persistence_service
             )
         return self._app_controller
+

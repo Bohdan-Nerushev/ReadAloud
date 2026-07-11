@@ -11,7 +11,7 @@ echo "🚀 Starting ReadAloud Test Suite"
 echo "------------------------------------------------"
 
 # Ensure we are in the project root
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # Running experiments to see if python3 -m unittest discover works
 # but for maximum reliability we list the main test files.

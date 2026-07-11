@@ -20,14 +20,18 @@ env/
 
 # Final outputs
 final/
+/final/
+file.txt
 
 # System files
 .DS_Store
 *.log
-
-/final/
-file.txt
-
 logs/*
 .logs
-*.log
+.data/
+
+# Build and distribution directories
+builds/
+build/
+dist/
+*.egg-info/

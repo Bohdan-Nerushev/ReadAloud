@@ -3,8 +3,10 @@
 Simple test script for ReadAloud domain services.
 """
 
+from pathlib import Path
 import sys
-sys.path.insert(0, '/home/bnerushev/PycharmProjects/ReadAloud')
+project_root = str(Path(__file__).resolve().parent.parent)
+sys.path.insert(0, project_root)
 
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
@@ -59,6 +61,7 @@ def test_text_chunking():
 def test_domain_models():
     """Test domain models."""
     from src.domain.models import ProjectConfig, AudioChunk
+    from src.domain.exceptions import ConfigurationException
     
     print("Testing Domain Models...")
     
@@ -72,8 +75,8 @@ def test_domain_models():
             thread_count=1,
             output_dir_path="/tmp"
         )
-        print("✗ Should have raised ValueError for empty project name")
-    except ValueError as e:
+        print("✗ Should have raised ConfigurationException for empty project name")
+    except ConfigurationException as e:
         print(f"✓ Validation works: {e}")
     
     try:
@@ -81,8 +84,8 @@ def test_domain_models():
             chunk_number=0,
             text_content="test"
         )
-        print("✗ Should have raised ValueError for chunk_number < 1")
-    except ValueError as e:
+        print("✗ Should have raised ConfigurationException for chunk_number < 1")
+    except ConfigurationException as e:
         print(f"✓ Validation works: {e}")
     
     print("✓ Domain Models tests passed!\n")

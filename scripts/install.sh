@@ -103,7 +103,7 @@ Version=1.0
 Type=Application
 Name=ReadAloud
 Comment=Text to Speech Application
-Exec=$INSTALL_DIR/start.sh
+Exec=$INSTALL_DIR/scripts/start.sh
 Icon=$INSTALL_DIR/src/resource/v_2.png
 Path=$INSTALL_DIR
 Terminal=false
@@ -135,9 +135,9 @@ echo "icon Registered ReadAloud in the system applications menu ($APP_MENU_FILE)
 echo "=================================================="
 echo "    🎉 Installation completed successfully! 🎉"
 echo "    🖥️ You can launch ReadAloud via the Desktop icon"
-echo "    💡 or by running: $INSTALL_DIR/start.sh"
+echo "    💡 or by running: $INSTALL_DIR/scripts/start.sh"
 echo "=================================================="
 
 # 8. Automatically launch the application in the background
 echo "🚀 Launching ReadAloud..."
-nohup "$INSTALL_DIR/start.sh" > /dev/null 2>&1 &
+nohup "$INSTALL_DIR/scripts/start.sh" > /dev/null 2>&1 &

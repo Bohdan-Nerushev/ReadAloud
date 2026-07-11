@@ -58,18 +58,21 @@ class TestGenerationService(unittest.TestCase):
         self.assertEqual(mock_tm.submit_task.call_count, 3)
 
     def test_generation_retry_logic(self):
-        """test_generation_retry_logic: Симуляція помилок та перевірка RetryHandler."""
-        # This requires simulating the _generate_batch_safe execution
+        """test_generation_retry_logic: Симуляція генерації батчу через AudioGenerator."""
         batch = self.chunks[:10]
         self.service._output_dir = "/mock/out"
         
-        # Setup mock retry handler to just return mock paths and durations
-        self.mock_retry_handler.execute_with_retry.return_value = [(f"/mock/out/{i}.mp3", 1.5) for i in range(10)]
+        # Setup mock generator to return mock paths and durations
+        self.mock_generator.generate_audio_batch.return_value = [(f"/mock/out/{i}.mp3", 1.5) for i in range(10)]
         
-        self.service._generate_batch_safe(batch, "en", "male", "test-id")
+        self.service._generate_batch_safe(batch, "en", "male", "test-id", 5)
         
-        # Verify it called retry handler
-        self.mock_retry_handler.execute_with_retry.assert_called_once()
+        # Verify it called AudioGenerator.generate_audio_batch
+        self.mock_generator.generate_audio_batch.assert_called_once_with(
+            batch, "en", "male", "/mock/out",
+            chunk_callback=self.service._on_chunk_generated_callback,
+            max_workers=5
+        )
 
     @patch('src.application.services.generation_service.ThreadManager')
     def test_pause_resume_behavior(self, mock_thread_manager_class):
