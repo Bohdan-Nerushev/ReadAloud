@@ -5,20 +5,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-# Mock PyQt6
-import sys
-mock_qt = MagicMock()
-class MockQObject:
-    def __init__(self, *args, **kwargs): pass
-mock_qt.QObject = MockQObject
-def mock_signal(*args):
-    s = MagicMock()
-    s.connect = MagicMock()
-    s.emit = MagicMock()
-    return s
-mock_qt.pyqtSignal = mock_signal
-sys.modules['PyQt6.QtCore'] = mock_qt
-sys.modules['PyQt6.QtWidgets'] = MagicMock()
+from PyQt6.QtWidgets import QApplication
+
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 from src.domain.models import ProjectConfig, GenerationTask, TaskStatus
 from src.application.services.persistence_service import PersistenceService

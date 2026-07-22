@@ -7,35 +7,12 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Mock dependencies
-sys.modules['edge_tts'] = MagicMock()
-mock_qt = MagicMock()
-class MockQObject:
-    def __init__(self, *args, **kwargs): pass
-class MockQThread(MockQObject):
-    finished = MagicMock()
-    error = MagicMock()
-    def start(self): pass
-    def terminate(self): pass
-    def wait(self): pass
-    def isRunning(self): return False
-class MockQTimer(MockQObject):
-    timeout = MagicMock()
-    def start(self, *args): pass
-    def stop(self): pass
-def mock_signal(*args):
-    s = MagicMock()
-    s.connect = MagicMock()
-    s.emit = MagicMock()
-    return s
+import sys
+from PyQt6.QtWidgets import QApplication
 
-mock_qt.QObject = MockQObject
-mock_qt.QThread = MockQThread
-mock_qt.QTimer = MockQTimer
-mock_qt.pyqtSignal = mock_signal
-
-sys.modules['PyQt6.QtCore'] = mock_qt
-sys.modules['PyQt6.QtWidgets'] = MagicMock()
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 from src.domain.models import ProjectConfig, GenerationTask, TaskStatus
 from src.application.app_controller import ApplicationController
@@ -65,6 +42,7 @@ class TestQueueSystem(unittest.TestCase):
 
 
         # Mock internal components to prevent actual execution logic
+        self.controller._start_preparation_worker = MagicMock()
         self.controller._prep_worker = MagicMock()
         
         # Mock timers

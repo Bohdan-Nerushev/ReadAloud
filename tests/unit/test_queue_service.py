@@ -96,9 +96,9 @@ class TestQueueService(unittest.TestCase):
         updated_mock = MagicMock()
         status_mock = MagicMock()
         
-        self.queue_service.subscribe_task_added(added_mock)
-        self.queue_service.subscribe_task_updated(updated_mock)
-        self.queue_service.subscribe_status_changed(status_mock)
+        self.queue_service.subscribe_task_added(lambda t: added_mock(t))
+        self.queue_service.subscribe_task_updated(lambda t: updated_mock(t))
+        self.queue_service.subscribe_status_changed(lambda s: status_mock(s))
         
         # Add task triggers added_mock
         task = self.queue_service.add_task(self.config)

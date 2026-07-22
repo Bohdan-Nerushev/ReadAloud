@@ -3,11 +3,11 @@ import sys
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-# Mock PyQt6 to avoid imports crashing
-mock_qt = MagicMock()
-sys.modules['PyQt6.QtCore'] = mock_qt
-sys.modules['PyQt6.QtWidgets'] = mock_qt
-sys.modules['src.gui.styles'] = MagicMock()
+from PyQt6.QtWidgets import QApplication
+
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 from src.main import ReadAloudApplication
 from src.domain.models import ProjectConfig, TaskStatus, GenerationTask

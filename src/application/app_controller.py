@@ -235,6 +235,7 @@ class ApplicationController(QObject):
         """Sets up connections from generation and assembly services."""
         # Generation Service signals
         self._generation_service.chunkGenerated.connect(self._on_chunk_generated)
+        self._generation_service.chunkFailed.connect(self._on_chunk_failed)
         self._generation_service.batchGenerated.connect(self._on_batch_generated)
         self._generation_service.batchFailed.connect(self._on_batch_failed)
         self._generation_service.errorOccurred.connect(self.errorOccurred.emit)
@@ -459,6 +460,43 @@ class ApplicationController(QObject):
                         task.config.speed,
                         str(task.id)
                     )
+            self._update_task_manifest()
+
+    def _on_chunk_failed(self, chunk_number: int, error_msg: str) -> None:
+        """Callback when a chunk fails permanently after retries."""
+        if self._is_stopped:
+            return
+        logging.warning(f"Chunk {chunk_number} failed permanently: {error_msg}")
+        if 1 <= chunk_number <= len(self._audio_files):
+            batch_index = self._assembly_service.mark_chunk_failed(chunk_number - 1)
+            if batch_index is not None:
+                task = self._get_current_task()
+                if task and self._audio_dir:
+                    start_idx = batch_index * self._assembly_service.BATCH_SIZE
+                    end_idx = min(start_idx + self._assembly_service.BATCH_SIZE, len(self._audio_files))
+                    batch_files = self._audio_files[start_idx:end_idx]
+                    self._assembly_service.submit_batch_by_index(
+                        batch_index,
+                        batch_files,
+                        self._audio_dir,
+                        task.config.speed,
+                        str(task.id)
+                    )
+            self._update_task_manifest()
+
+    def _update_task_manifest(self) -> None:
+        """Saves current chunk and batch progress to manifest.json."""
+        task = self._get_current_task()
+        if not task or not self._audio_dir:
+            return
+        manifest_data = {
+            "task_id": str(task.id),
+            "updated_at": datetime.now().isoformat(),
+            "total_chunks": len(self._chunks),
+            "completed_count": sum(1 for f in self._audio_files if f is not None),
+            "audio_files": self._audio_files,
+        }
+        self._persistence_service.save_manifest(self._audio_dir, manifest_data)
 
     def _on_batch_generated(self, results: List[tuple]) -> None:
         """Callback for batch generation results to ensure no chunks are missed."""
@@ -468,18 +506,20 @@ class ApplicationController(QObject):
 
     def _on_batch_failed(self, batch: List[AudioChunk], error_msg: str) -> None:
         """
-        Callback when one or more chunks in a batch fail permanently.
-
-        BUG-2 consequence fix:
-            With the updated AudioGenerator, a batch failure is now a *partial*
-            failure: only specific chunks failed (after all retries).  We log the
-            event for observability but do NOT stop the pipeline — the rest of the
-            audio can still be assembled from the chunks that succeeded.
+        Callback when a batch fails after all retries.
+        Marks the task as failed only if no valid chunks were produced for the task.
         """
-        logging.warning(
-            f"Batch partial failure ({len(batch)} chunk(s) skipped): {error_msg}. "
-            "Pipeline continues with remaining chunks."
+        logging.error(
+            f"Batch generation failed ({len(batch)} chunk(s) failed: {error_msg})."
         )
+        valid_chunks_count = sum(1 for f in self._audio_files if f is not None)
+        if valid_chunks_count == 0 and len(self._chunks) > 0:
+            logging.error("All chunks in task failed permanently — failing task.")
+            self._handle_task_failure(f"Task synthesis error: {error_msg}")
+        else:
+            logging.warning(
+                f"Batch failed, but continuing pipeline with {valid_chunks_count} existing valid chunk(s)."
+            )
 
     def _monitor_completion(self) -> None:
         """
@@ -754,29 +794,46 @@ class ApplicationController(QObject):
                 chunk_audio = audio_path / f"{c.chunk_number}.mp3"
                 if chunk_audio.exists() and chunk_audio.stat().st_size > 0:
                     duration = self._generation_service._audio_generator._get_file_duration_fast(str(chunk_audio))
-                    self._audio_files[idx] = str(chunk_audio.absolute())
-                    self._chunks[idx] = c.with_audio_path(str(chunk_audio.absolute()), duration)
-                    
-                    batch_index = self._assembly_service.mark_chunk_ready(idx, duration)
-                    if batch_index is not None:
-                        part_path = audio_path / f"part_{batch_index}.mp3"
-                        if part_path.exists() and part_path.stat().st_size > 0:
-                            # BUG-5 FIX: use the public API instead of writing
-                            # to private attributes directly.
-                            self._assembly_service.restore_batch_result(
-                                batch_index, str(part_path)
+                    if duration > 0.0:
+                        self._audio_files[idx] = str(chunk_audio.absolute())
+                        self._chunks[idx] = c.with_audio_path(str(chunk_audio.absolute()), duration)
+                        
+                        batch_index = self._assembly_service.mark_chunk_ready(idx, duration)
+                        if batch_index is not None:
+                            part_path = audio_path / f"part_{batch_index}.mp3"
+                            part_dur = (
+                                self._generation_service._audio_generator._get_file_duration_fast(str(part_path))
+                                if (part_path.exists() and part_path.stat().st_size > 0) else 0.0
                             )
-                        else:
-                            start_idx = batch_index * self._assembly_service.BATCH_SIZE
-                            end_idx = min(start_idx + self._assembly_service.BATCH_SIZE, len(self._audio_files))
-                            batch_files = self._audio_files[start_idx:end_idx]
-                            self._assembly_service.submit_batch_by_index(
-                                batch_index,
-                                batch_files,
-                                self._audio_dir,
-                                task.config.speed,
-                                str(task.id)
-                            )
+                            if part_dur > 0.0:
+                                self._assembly_service.restore_batch_result(
+                                    batch_index, str(part_path)
+                                )
+                            else:
+                                if part_path.exists():
+                                    try:
+                                        part_path.unlink()
+                                        logging.warning(f"Removed corrupt/empty batch part file on restore: {part_path}")
+                                    except Exception as e:
+                                        logging.error(f"Failed to remove corrupt part file {part_path}: {e}")
+
+                                start_idx = batch_index * self._assembly_service.BATCH_SIZE
+                                end_idx = min(start_idx + self._assembly_service.BATCH_SIZE, len(self._audio_files))
+                                batch_files = self._audio_files[start_idx:end_idx]
+                                self._assembly_service.submit_batch_by_index(
+                                    batch_index,
+                                    batch_files,
+                                    self._audio_dir,
+                                    task.config.speed,
+                                    str(task.id)
+                                )
+                    else:
+                        # Corrupted or zero-duration MP3 file — remove so it can be re-synthesized cleanly
+                        try:
+                            chunk_audio.unlink()
+                            logging.warning(f"Removed corrupt/empty chunk file on restore: {chunk_audio}")
+                        except Exception as e:
+                            logging.error(f"Failed to remove corrupt chunk file {chunk_audio}: {e}")
             
             logging.info(f"Restored task progress: {sum(1 for f in self._audio_files if f is not None)}/{len(chunks)} chunks ready.")
             
@@ -796,6 +853,7 @@ class ApplicationController(QObject):
         self._progress_timer.stop()
         if self._completion_monitor_timer:
             self._completion_monitor_timer.stop()
+        self._terminate_prep_worker()
 
     def _terminate_prep_worker(self) -> None:
         """Terminates the preparation worker if running."""

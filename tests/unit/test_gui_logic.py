@@ -2,40 +2,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock
 
-# Mock styles and models to avoid complex dependencies
-class MockStyles:
-    BUTTON_START = ""
-    BUTTON_STOP = ""
-    BUTTON_PAUSE = ""
-    CARD_STYLE = ""
-    SPACING_MEDIUM = 5
-    SPACING_LARGE = 10
-    QUEUE_ITEM_PROGRESS_HEIGHT = 10
-    QUEUE_ITEM_HEIGHT = 100
-    QUEUE_LIST_HEIGHT = 200
-    MAIN_WINDOW_STYLE = ""
-    LABEL_TITLE = ""
-
-class MockPalette:
-    TEXT_PRIMARY = "#000"
-    TEXT_SECONDARY = "#666"
-    PRIMARY = "#0078d4"
-    PRIMARY_PRESSED = "#005a9e"
-    ERROR = "#d13438"
-    ERROR_HOVER = "#a4262c"
-    WARNING = "#ffb900"
-    BG_MAIN = "#fff"
-    BG_INPUT = "#f3f2f1"
-    BORDER_LIGHT = "#edebe9"
-    BORDER_DEFAULT = "#c8c6c4"
-
-# Mock styles module
-mock_styles_module = MagicMock()
-mock_styles_module.Styles = MockStyles
-mock_styles_module.Palette = MockPalette
-sys.modules['src.gui.styles'] = mock_styles_module
-
 from PyQt6.QtWidgets import QApplication
+from src.gui.styles import Styles, Palette
 from src.gui.widgets.control_buttons import ControlButtonsWidget
 from src.gui.widgets.queue_item import QueueItemWidget
 from src.domain.models import GenerationTask, ProjectConfig, TaskStatus

@@ -142,6 +142,34 @@ class AssemblyService(QObject):
                 return batch_index
         return None
 
+    def mark_chunk_failed(self, chunk_index: int) -> Optional[int]:
+        """
+        Marks a chunk as permanently failed so the batch count advances without hanging.
+
+        Args:
+            chunk_index: 0-based index of the failed chunk.
+
+        Returns:
+            The batch_index if all chunks in that batch are now processed (and the
+            batch has not yet been submitted), or ``None`` otherwise.
+        """
+        batch_index = chunk_index // self.BATCH_SIZE
+        with self._state_lock:
+            if batch_index not in self._batch_ready_counts:
+                return None
+
+            self._batch_ready_counts[batch_index] += 1
+
+            rel_idx = chunk_index % self.BATCH_SIZE
+            self._batch_durations[batch_index][rel_idx] = 0.0
+
+            if (
+                self._batch_ready_counts[batch_index] == self._get_batch_size(batch_index)
+                and batch_index not in self._batch_submitted
+            ):
+                return batch_index
+        return None
+
     # ------------------------------------------------------------------
     # Batch submission
     # ------------------------------------------------------------------
@@ -169,20 +197,39 @@ class AssemblyService(QObject):
             return
 
         part_path = Path(output_dir) / f"part_{batch_index}.mp3"
+        tmp_part_path = Path(output_dir) / f"part_{batch_index}.mp3.tmp"
         logging.info(f"Submitting batch {batch_index} for assembly ({len(files)} files)")
+
+        # Filter out any None entries (permanently failed chunks)
+        valid_pairs = [(f, d) for f, d in zip(files, durations) if f is not None]
+        if not valid_pairs:
+            logging.warning(f"Batch {batch_index} has no valid chunk files — skipping batch assembly.")
+            return
+        valid_files = [f for f, d in valid_pairs]
+        valid_durations = [d for f, d in valid_pairs]
 
         def _assemble_task() -> str:
             set_correlation_id(correlation_id)
             try:
                 self._audio_assembler.assemble_audio(
-                    files,
-                    str(part_path),
+                    valid_files,
+                    str(tmp_part_path),
                     speed=speed,
                     copy_codec=False,
-                    durations=durations
+                    durations=valid_durations
                 )
+                import os
+                if tmp_part_path.exists():
+                    os.replace(str(tmp_part_path), str(part_path))
+                elif not part_path.exists():
+                    part_path.touch()
                 return str(part_path)
             except Exception as e:
+                if tmp_part_path.exists():
+                    try:
+                        tmp_part_path.unlink()
+                    except Exception:
+                        pass
                 logging.error(f"Batch {batch_index} assembly failed: {e}", exc_info=True)
                 raise
 

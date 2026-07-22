@@ -10,6 +10,7 @@ from typing import Optional
 
 from src.infrastructure.file_manager import FileManager
 from src.infrastructure.thread_manager import ThreadManager
+from src.infrastructure.network_manager import NetworkManager
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
 from src.domain.audio_generator import AudioGenerator
@@ -34,12 +35,19 @@ class Container:
         self._audio_generator: Optional[AudioGenerator] = None
         self._audio_assembler: Optional[AudioAssembler] = None
         self._file_manager: Optional[FileManager] = None
+        self._network_manager: Optional[NetworkManager] = None
         
         self._generation_service: Optional[GenerationService] = None
         self._assembly_service: Optional[AssemblyService] = None
         self._persistence_service: Optional[PersistenceService] = None
         self._app_controller: Optional[ApplicationController] = None
 
+
+    @property
+    def network_manager(self) -> NetworkManager:
+        if not self._network_manager:
+            self._network_manager = NetworkManager()
+        return self._network_manager
 
     @property
     def queue_service(self) -> QueueService:
@@ -62,7 +70,9 @@ class Container:
     @property
     def audio_generator(self) -> AudioGenerator:
         if not self._audio_generator:
-            self._audio_generator = AudioGenerator()
+            self._audio_generator = AudioGenerator(
+                network_manager=self.network_manager
+            )
         return self._audio_generator
 
     @property

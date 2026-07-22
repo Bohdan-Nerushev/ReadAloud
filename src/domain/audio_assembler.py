@@ -160,28 +160,52 @@ class AudioAssembler:
         speed: float, 
         callback: callable
     ) -> None:
+        import select
         start_time = time.time()
+        last_activity = time.time()
         time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)")
 
         while True:
-            line = process.stderr.readline()
-            if not line:
-                if process.poll() is not None:
-                    break
-                continue
+            # Non-blocking poll on stderr with 1 second timeout
+            try:
+                rlist, _, _ = select.select([process.stderr], [], [], 1.0)
+            except (TypeError, ValueError, AttributeError, Exception):
+                # Fallback for mock streams in unit tests
+                rlist = [process.stderr]
+            if rlist:
+                line = process.stderr.readline()
+                if line:
+                    last_activity = time.time()
+                    if callback and total_duration > 0:
+                        match = time_pattern.search(line)
+                        if match:
+                            hours, minutes, seconds = map(float, match.groups())
+                            current_seconds = hours * 3600 + minutes * 60 + seconds
+                            expected_output_duration = total_duration / speed
+                            percentage = min(100.0, (current_seconds / expected_output_duration) * 100.0)
+                            
+                            elapsed = time.time() - start_time
+                            if percentage > 0:
+                                total_estimated = elapsed * (100.0 / percentage)
+                                callback(percentage, total_estimated - elapsed)
             
-            if callback and total_duration > 0:
-                match = time_pattern.search(line)
-                if match:
-                    hours, minutes, seconds = map(float, match.groups())
-                    current_seconds = hours * 3600 + minutes * 60 + seconds
-                    expected_output_duration = total_duration / speed
-                    percentage = min(100.0, (current_seconds / expected_output_duration) * 100.0)
-                    
-                    elapsed = time.time() - start_time
-                    if percentage > 0:
-                        total_estimated = elapsed * (100.0 / percentage)
-                        callback(percentage, total_estimated - elapsed)
+            poll_res = process.poll()
+            if poll_res is not None:
+                # Read any remaining output lines
+                if process.stderr:
+                    for line in process.stderr.readlines():
+                        pass
+                break
+
+            # Guard against completely hung ffmpeg process (no output for 3 minutes)
+            if time.time() - last_activity > 180.0:
+                logging.error("ffmpeg process appears hung (no stderr output for 180s) — terminating.")
+                process.terminate()
+                try:
+                    process.wait(timeout=3.0)
+                except Exception:
+                    process.kill()
+                raise TimeoutError("ffmpeg process hung and was terminated.")
 
     def stop(self) -> None:
         """Stops all active ffmpeg processes managed by this instance."""

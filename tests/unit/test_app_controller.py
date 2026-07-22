@@ -6,29 +6,11 @@ from unittest.mock import MagicMock, patch
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Mock PyQt6 before imports
-mock_qt = MagicMock()
-class MockQObject:
-    def __init__(self, *args, **kwargs): pass
-class MockQThread(MockQObject):
-    finished = MagicMock()
-    error = MagicMock()
-    def start(self): pass
-    def terminate(self): pass
-    def wait(self, *args): pass
-    def isRunning(self): return False
-def mock_signal(*args):
-    s = MagicMock()
-    s.connect = MagicMock()
-    s.emit = MagicMock()
-    return s
+from PyQt6.QtWidgets import QApplication
 
-mock_qt.QObject = MockQObject
-mock_qt.QThread = MockQThread
-mock_qt.pyqtSignal = mock_signal
-
-sys.modules['PyQt6.QtCore'] = mock_qt
-sys.modules['PyQt6.QtWidgets'] = MagicMock()
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 from src.application.app_controller import ApplicationController
 from src.domain.models import ProjectConfig, GenerationTask, TaskStatus
@@ -130,9 +112,10 @@ class TestAppController(unittest.TestCase):
 
     def test_initialize_task_state_emits_correct_signal(self):
         """test_initialize_task_state_emits_correct_signal: Verifies that the progressUpdated signal is emitted with 4 arguments on initialization."""
-        # Use a real signal behavior mock if possible or just check emit call
+        mock_slot = MagicMock()
+        self.controller.progressUpdated.connect(mock_slot)
         self.controller._initialize_task_state(self.task_1)
-        self.controller.progressUpdated.emit.assert_called_with(0, 0, "Preparing...", 0.0)
+        mock_slot.assert_called_with(0, 0, "Preparing...", 0.0)
 
     def test_restore_state_active_task(self):
         """test_restore_state_active_task: Verifies restore_state handles active tasks and emits statusChanged."""

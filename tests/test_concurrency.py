@@ -5,19 +5,11 @@ import time
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-# Mock PyQt6
-mock_qt = MagicMock()
-class MockQObject:
-    def __init__(self, *args, **kwargs): pass
-mock_qt.QObject = MockQObject
-def mock_signal(*args):
-    s = MagicMock()
-    s.connect = MagicMock()
-    s.emit = MagicMock()
-    return s
-mock_qt.pyqtSignal = mock_signal
-sys.modules['PyQt6.QtCore'] = mock_qt
-sys.modules['PyQt6.QtWidgets'] = MagicMock()
+from PyQt6.QtWidgets import QApplication
+
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 from src.application.services.queue_service import QueueService
 from src.domain.models import ProjectConfig, TaskStatus

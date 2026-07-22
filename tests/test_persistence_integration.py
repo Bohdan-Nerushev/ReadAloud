@@ -5,25 +5,12 @@ import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# Mock PyQt6
 import sys
-mock_qt = MagicMock()
-class MockQObject:
-    def __init__(self, *args, **kwargs): pass
-mock_qt.QObject = MockQObject
+from PyQt6.QtWidgets import QApplication
 
-class MockSignal:
-    def __init__(self, *args):
-        self._slots = []
-    def connect(self, slot):
-        self._slots.append(slot)
-    def emit(self, *args, **kwargs):
-        for slot in self._slots:
-            slot(*args, **kwargs)
-
-mock_qt.pyqtSignal = MockSignal
-sys.modules['PyQt6.QtCore'] = mock_qt
-sys.modules['PyQt6.QtWidgets'] = MagicMock()
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 from src.domain.models import ProjectConfig, GenerationTask, TaskStatus, AudioChunk
 from src.domain.text_processor import TextProcessor

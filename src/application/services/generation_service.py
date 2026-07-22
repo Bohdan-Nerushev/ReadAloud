@@ -37,6 +37,7 @@ class GenerationService(QObject):
     # Signals to communicate with the Controller / UI
     progressUpdated = pyqtSignal(int, int, str, float)   # processed, total, eta, speed
     chunkGenerated = pyqtSignal(int, str, float)          # chunk_number, file_path, duration
+    chunkFailed = pyqtSignal(int, str)                    # chunk_number, error_message
     batchGenerated = pyqtSignal(list)                     # list of (chunk_number, file_path, duration)
     batchFailed = pyqtSignal(list, str)                   # list of chunks, error message
     errorOccurred = pyqtSignal(str)
@@ -107,7 +108,7 @@ class GenerationService(QObject):
         return self._thread_manager is not None and self._thread_manager.is_paused()
 
     def stop(self) -> None:
-        """Stops all generation work immediately."""
+        """Stops all generation work immediately and closes active threads."""
         self._is_stopped = True
         if self._thread_manager:
             self._thread_manager.stop()
@@ -183,13 +184,6 @@ class GenerationService(QObject):
     ) -> None:
         """
         Executed by a worker thread. Generates audio for a batch of chunks.
-
-        BUG-2 consequence fix:
-            AudioGenerator.generate_audio_batch() now returns a list of
-            (str, float) | None entries.  We treat None as a per-chunk failure
-            rather than aborting the entire batch.  Only succeeded chunks are
-            reported via chunkGenerated; failed ones are counted as failures in
-            the progress tracker and logged — but the pipeline continues.
         """
         if self._is_stopped:
             return
@@ -214,28 +208,27 @@ class GenerationService(QObject):
                     break
 
                 if result is None:
-                    # This chunk failed after all retries — do NOT stop the pipeline
+                    # This chunk failed after all retries — log and count failure, but do NOT abort pipeline
                     failed_chunks.append(chunk)
                     self._update_internal_progress(success=False)
                     logging.warning(
                         f"Chunk {chunk.chunk_number} permanently failed — "
                         "skipping and continuing pipeline."
                     )
+                    self.chunkFailed.emit(chunk.chunk_number, "Failed after max retries")
                 else:
                     file_path, duration = result
                     batch_results.append((chunk.chunk_number, file_path, duration))
-                    # Note: chunkGenerated is already emitted via chunk_callback;
-                    # we collect results here only for the batchGenerated signal.
 
             if batch_results and not self._is_stopped:
                 self.batchGenerated.emit(batch_results)
 
-            if failed_chunks and not self._is_stopped:
-                # Emit informational signal — controller can log but should NOT
-                # stop the pipeline for a partial failure.
+            # Only emit batchFailed if ALL chunks in the batch failed permanently
+            if failed_chunks and len(failed_chunks) == len(batch) and not self._is_stopped:
+                logging.error(f"All {len(batch)} chunk(s) in batch failed permanently.")
                 self.batchFailed.emit(
                     failed_chunks,
-                    f"{len(failed_chunks)} chunk(s) failed permanently after max retries"
+                    f"All {len(failed_chunks)} chunk(s) in batch failed permanently after max retries"
                 )
 
         except Exception as e:

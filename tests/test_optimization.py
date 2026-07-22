@@ -11,38 +11,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Mock edge_tts before import
 sys.modules['edge_tts'] = MagicMock()
 
-# Mock PyQt6
-mock_qt_core = MagicMock()
-class MockQObject:
-    def __init__(self, *args, **kwargs): pass
+from PyQt6.QtWidgets import QApplication
 
-class MockQThread(MockQObject):
-    finished = MagicMock()
-    error = MagicMock()
-    def start(self): pass
-    def terminate(self): pass
-    def wait(self): pass
-    def isRunning(self): return False
-
-class MockQTimer(MockQObject):
-    timeout = MagicMock()
-    def start(self, *args): pass
-    def stop(self): pass
-
-def mock_signal(*args):
-    s = MagicMock()
-    s.connect = MagicMock()
-    s.emit = MagicMock()
-    return s
-
-mock_qt_core.QObject = MockQObject
-mock_qt_core.QThread = MockQThread
-mock_qt_core.QTimer = MockQTimer
-mock_qt_core.pyqtSignal = mock_signal
-
-sys.modules['PyQt6.QtCore'] = mock_qt_core
-sys.modules['PyQt6.QtWidgets'] = MagicMock()
-sys.modules['PyQt6'] = MagicMock()
+app = QApplication.instance()
+if app is None:
+    app = QApplication(sys.argv)
 
 from src.domain.models import AudioChunk, ProjectConfig, GenerationTask
 from src.domain.audio_generator import AudioGenerator

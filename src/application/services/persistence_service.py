@@ -97,6 +97,45 @@ class PersistenceService:
             return []
 
     # ------------------------------------------------------------------
+    # Manifest checkpoint API
+    # ------------------------------------------------------------------
+
+    def save_manifest(self, directory: str, manifest_data: Dict[str, Any]) -> bool:
+        """
+        Atomically saves task manifest metadata (manifest.json) into the specified directory.
+        """
+        try:
+            target_dir = Path(directory)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = target_dir / "manifest.json"
+            tmp_path = target_dir / "manifest.json.tmp"
+
+            payload = json.dumps(manifest_data, indent=4, ensure_ascii=False)
+            tmp_path.write_text(payload, encoding="utf-8")
+            os.replace(str(tmp_path), str(manifest_path))
+            logging.debug(f"Manifest saved atomically in {directory}.")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to save manifest in {directory}: {e}", exc_info=True)
+            return False
+
+    def load_manifest(self, directory: str) -> Optional[Dict[str, Any]]:
+        """
+        Loads manifest metadata (manifest.json) from the specified directory.
+        """
+        try:
+            manifest_path = Path(directory) / "manifest.json"
+            if not manifest_path.exists():
+                return None
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+            return None
+        except Exception as e:
+            logging.warning(f"Failed to load manifest from {directory}: {e}")
+            return None
+
+    # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
