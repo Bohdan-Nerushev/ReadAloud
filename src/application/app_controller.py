@@ -467,14 +467,41 @@ class ApplicationController(QObject):
         pass
 
     def _on_batch_failed(self, batch: List[AudioChunk], error_msg: str) -> None:
-        """Callback when batch generation fails definitively."""
-        logging.error(f"Batch generation failed definitively: {error_msg}")
-        self._handle_task_failure(f"Generation failed: {error_msg}")
+        """
+        Callback when one or more chunks in a batch fail permanently.
+
+        BUG-2 consequence fix:
+            With the updated AudioGenerator, a batch failure is now a *partial*
+            failure: only specific chunks failed (after all retries).  We log the
+            event for observability but do NOT stop the pipeline — the rest of the
+            audio can still be assembled from the chunks that succeeded.
+        """
+        logging.warning(
+            f"Batch partial failure ({len(batch)} chunk(s) skipped): {error_msg}. "
+            "Pipeline continues with remaining chunks."
+        )
 
     def _monitor_completion(self) -> None:
-        """Monitors generation completion and triggers final assembly."""
+        """
+        Monitors generation completion and triggers final assembly.
+
+        ISSUE-6 FIX:
+            Stop and discard any *existing* completion monitor timer before
+            creating a new one.  Previously, if ``_monitor_completion`` was called
+            more than once (e.g. after recovery), the previous QTimer was
+            overwritten without being stopped, creating an orphaned timer that
+            continued firing indefinitely and could call ``_finalize_generation``
+            on the wrong task.
+        """
+        # Stop and clean up any existing timer before replacing it
+        if self._completion_monitor_timer is not None:
+            self._completion_monitor_timer.stop()
+            self._completion_monitor_timer = None
+
         def check_completion() -> None:
             if self._is_stopped:
+                if self._completion_monitor_timer:
+                    self._completion_monitor_timer.stop()
                 return
 
             processed, total, _, _ = self._generation_service.get_progress_info()
@@ -511,18 +538,36 @@ class ApplicationController(QObject):
             self.errorOccurred.emit(f"Failed to prepare final generation: {str(e)}")
 
     def _execute_assembly_workflow(self, output_path: Path, speed: float, correlation_id: str) -> None:
-        """Core assembly workflow executed in a separate thread."""
+        """
+        Core assembly workflow executed in a separate daemon thread.
+
+        ISSUE-13 FIX:
+            Check ``_is_stopped`` before calling ``_mark_task_completed`` and
+            ``_cleanup_temp_files``.  Without this guard, a race exists where the
+            pipeline is stopped externally *while* assembly is running; the
+            daemon thread would then call ``_mark_task_completed`` which emits
+            signals and mutates the (now-dead) queue service.
+        """
         try:
             self._assembly_service.assemble_final(
-                output_path, 
-                self._audio_files, 
+                output_path,
+                self._audio_files,
                 speed,
                 correlation_id
             )
-            self._cleanup_temp_files()
-            self._mark_task_completed()
+            # Only advance the pipeline state if we were not stopped mid-assembly
+            if not self._is_stopped:
+                self._cleanup_temp_files()
+                self._mark_task_completed()
+            else:
+                logging.info(
+                    "Assembly completed but pipeline was stopped — skipping task completion."
+                )
         except Exception as e:
-            self._handle_assembly_error(e)
+            if not self._is_stopped:
+                self._handle_assembly_error(e)
+            else:
+                logging.info(f"Assembly error ignored (pipeline stopped): {e}")
 
     def _on_assembly_progress(self, percentage: float, remaining: float) -> None:
         """Callback for assembly progress signals."""
@@ -716,10 +761,11 @@ class ApplicationController(QObject):
                     if batch_index is not None:
                         part_path = audio_path / f"part_{batch_index}.mp3"
                         if part_path.exists() and part_path.stat().st_size > 0:
-                            with self._assembly_service._state_lock:
-                                self._assembly_service._batch_results[batch_index] = str(part_path)
-                                self._assembly_service._batch_submitted.add(batch_index)
-                            logging.info(f"Restoring assembled batch part {batch_index} from disk.")
+                            # BUG-5 FIX: use the public API instead of writing
+                            # to private attributes directly.
+                            self._assembly_service.restore_batch_result(
+                                batch_index, str(part_path)
+                            )
                         else:
                             start_idx = batch_index * self._assembly_service.BATCH_SIZE
                             end_idx = min(start_idx + self._assembly_service.BATCH_SIZE, len(self._audio_files))

@@ -5,7 +5,7 @@ This module handles tracking progress of audio generation and estimating complet
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 import threading
 
 

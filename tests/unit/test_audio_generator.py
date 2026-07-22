@@ -69,15 +69,54 @@ class TestAudioGenerator(unittest.TestCase):
             self.generator.generate_audio_batch([chunk], "ja", "male", "/tmp")
 
     def test_generate_audio_batch_failure_handling(self):
-        """test_generate_audio_batch_failure_handling: Verifies correct retry and error handling on API failure."""
+        """
+        Verifies per-chunk failure isolation (BUG-2 fix).
+
+        With the updated AudioGenerator, individual chunk failures no longer
+        abort the entire batch.  A permanently failing chunk produces a ``None``
+        entry in the results list.  The batch call itself succeeds (no exception
+        is raised at the batch level).
+
+        A generic Exception with no transient keywords (ISSUE-11 fix) is treated
+        as fatal and aborts retrying after the first attempt.
+        """
         self.mock_instance.save.side_effect = Exception("API Error")
         chunk = AudioChunk(chunk_number=1, text_content="text")
-        with self.assertRaises(Exception) as cm:
-            self.generator.generate_audio_batch(
-                [chunk], "en", "male", "/tmp",
-                max_retries=2, backoff=0.01
-            )
-        self.assertIn("Batch generation failed", str(cm.exception))
+
+        # Should NOT raise — failed chunk returns None in results
+        results = self.generator.generate_audio_batch(
+            [chunk], "en", "male", "/tmp",
+            max_retries=2, backoff=0.01
+        )
+
+        # The result list has one entry and it is None (chunk failed)
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(results[0])
+
+        # ISSUE-11: generic 'API Error' is treated as FATAL — no retries.
+        # So TTS is called exactly once (no retry loop).
+        self.assertEqual(self.mock_instance.save.call_count, 1)
+
+    def test_generate_audio_batch_transient_error_retries(self):
+        """
+        Verifies that transient errors (matching known patterns) are retried
+        up to max_retries times (ISSUE-10 / ISSUE-11 fix).
+        """
+        # 'timeout' keyword triggers the transient classification
+        self.mock_instance.save.side_effect = Exception("connection timeout")
+        chunk = AudioChunk(chunk_number=1, text_content="text")
+
+        results = self.generator.generate_audio_batch(
+            [chunk], "en", "male", "/tmp",
+            max_retries=2, backoff=0.01
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(results[0])
+
+        # Transient error — should have retried max_retries (2) times
+        self.assertEqual(self.mock_instance.save.call_count, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

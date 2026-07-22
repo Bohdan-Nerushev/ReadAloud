@@ -1,3 +1,10 @@
+"""
+Persistence service for saving and loading queue state.
+
+Uses atomic write semantics (write-to-temp + rename) to ensure the state file
+is never partially written even if the process is killed mid-operation.
+"""
+
 import json
 import logging
 import os
@@ -10,39 +17,88 @@ from src.domain.models import ProjectConfig, GenerationTask, TaskStatus
 
 
 class PersistenceService:
+    """
+    Responsible for serialising and deserialising the task queue to disk.
+
+    Atomic writes:
+        State is written to a sibling temp file first, then atomically renamed
+        over the target path. On POSIX systems, ``os.replace`` is guaranteed
+        atomic at the filesystem level, so the state file is always either
+        the previous complete version or the new complete version — never
+        a partial/corrupt file.
+    """
+
     def __init__(self, file_path: str) -> None:
-        self._file_path = file_path
+        self._file_path = Path(file_path)
+        self._tmp_path = self._file_path.with_suffix(".tmp")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def save_state(self, tasks: List[GenerationTask]) -> bool:
-        try:
-            parent_dir = Path(self._file_path).parent
-            parent_dir.mkdir(parents=True, exist_ok=True)
+        """
+        Atomically saves the current task list to disk.
 
+        ISSUE-8 FIX:
+            Previously the state file was opened directly for writing, leaving
+            a corrupt/empty file if the process was killed mid-write.  Now we:
+            1. Write the full JSON to a sibling ``.tmp`` file.
+            2. Call ``os.replace`` to atomically swap it into place.
+            This means the persisted file is always either the previous complete
+            snapshot or the new complete snapshot — never something in between.
+
+        Returns:
+            True on success, False if an error occurred (already logged).
+        """
+        try:
+            self._file_path.parent.mkdir(parents=True, exist_ok=True)
             serialized = [self._task_to_dict(task) for task in tasks]
-            with open(self._file_path, "w", encoding="utf-8") as f:
-                json.dump(serialized, f, indent=4)
+            payload = json.dumps(serialized, indent=4, ensure_ascii=False)
+
+            # Write to temp file first
+            self._tmp_path.write_text(payload, encoding="utf-8")
+
+            # Atomic replace — on POSIX this is guaranteed atomic
+            os.replace(str(self._tmp_path), str(self._file_path))
+
+            logging.debug(f"State saved atomically ({len(tasks)} task(s)).")
             return True
+
         except Exception as e:
             logging.error(f"Failed to save state: {e}", exc_info=True)
+            # Try to remove the temp file so stale data does not accumulate
+            try:
+                if self._tmp_path.exists():
+                    self._tmp_path.unlink()
+            except Exception:
+                pass
             return False
 
     def load_state(self) -> List[GenerationTask]:
-        if not os.path.exists(self._file_path):
+        """
+        Loads the saved task list from disk.
+
+        Returns an empty list (and removes the corrupted file) if the state
+        file does not exist or cannot be parsed.
+        """
+        if not self._file_path.exists():
             return []
 
         try:
-            with open(self._file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
+            data = json.loads(self._file_path.read_text(encoding="utf-8"))
             if not isinstance(data, list):
                 self._handle_corrupted()
                 return []
-
             return self._parse_tasks(data)
         except Exception as e:
             logging.warning(f"Failed to load state: {e}")
             self._handle_corrupted()
             return []
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
 
     def _parse_tasks(self, data: List[Dict[str, Any]]) -> List[GenerationTask]:
         tasks = []
@@ -53,12 +109,14 @@ class PersistenceService:
         return tasks
 
     def _handle_corrupted(self) -> None:
-        try:
-            if os.path.exists(self._file_path):
-                os.unlink(self._file_path)
-                logging.warning(f"Removed corrupted state file: {self._file_path}")
-        except Exception as e:
-            logging.error(f"Failed to remove corrupted state file: {e}", exc_info=True)
+        """Removes a corrupt state file to prevent repeated failures on startup."""
+        for path in (self._file_path, self._tmp_path):
+            try:
+                if path.exists():
+                    path.unlink()
+                    logging.warning(f"Removed corrupted state file: {path}")
+            except Exception as e:
+                logging.error(f"Failed to remove corrupted state file {path}: {e}", exc_info=True)
 
     def _task_to_dict(self, task: GenerationTask) -> Dict[str, Any]:
         return {
