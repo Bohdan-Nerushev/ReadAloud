@@ -331,7 +331,7 @@ class AudioGenerator:
         effective_workers = max(1, min(max_workers, len(chunks)))
         batches_count = math.ceil(len(chunks) / effective_workers)
         per_batch_worst_case = 60 * max_retries + 60
-        batch_timeout = max(120.0, min(batches_count * per_batch_worst_case + 60.0, 600.0))
+        batch_timeout = max(300.0, min(batches_count * per_batch_worst_case + 300.0, 1200.0))
 
         async def _run_batch() -> List[Optional[Tuple[str, float]]]:
             return await self._generate_batch_async(
@@ -347,10 +347,12 @@ class AudioGenerator:
             # ISSUE-7 FIX: timeout prevents indefinite blocking if the loop stalls.
             return future.result(timeout=batch_timeout)
         except TimeoutError as e:
+            future.cancel()
             msg = f"Batch generation timed out after {batch_timeout:.1f}s"
             logging.error(msg, exc_info=True)
             raise TimeoutError(msg) from e
         except Exception as e:
+            future.cancel()
             logging.error(f"Batch generation failed: {e}", exc_info=True)
             raise Exception(f"Batch generation failed: {str(e) or type(e).__name__}") from e
 
@@ -428,7 +430,13 @@ class AudioGenerator:
                     queue.task_done()
 
         workers = [asyncio.create_task(worker()) for _ in range(max_workers)]
-        await asyncio.gather(*workers)
+        try:
+            await asyncio.gather(*workers)
+        except asyncio.CancelledError:
+            for w in workers:
+                if not w.done():
+                    w.cancel()
+            raise
         return results
 
     async def _generate_one_with_retry(
