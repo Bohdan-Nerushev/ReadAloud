@@ -344,11 +344,11 @@ class AudioGenerator:
 
         try:
             future = asyncio.run_coroutine_threadsafe(_run_batch(), self._loop)
-            # ISSUE-7 FIX: timeout prevents indefinite blocking if the loop stalls.
-            return future.result(timeout=batch_timeout)
+            # Chunks are self-limiting (60s timeout per call, max 10 retries). Allow batch to complete naturally.
+            return future.result(timeout=None)
         except TimeoutError as e:
             future.cancel()
-            msg = f"Batch generation timed out after {batch_timeout:.1f}s"
+            msg = "Batch generation timed out"
             logging.error(msg, exc_info=True)
             raise TimeoutError(msg) from e
         except Exception as e:
