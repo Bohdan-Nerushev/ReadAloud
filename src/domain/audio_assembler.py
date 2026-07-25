@@ -62,6 +62,8 @@ class AudioAssembler:
         """
         if not audio_files:
             raise ValueError("Audio files list cannot be empty")
+        if speed <= 0:
+            raise ValueError(f"Speed must be positive, got: {speed}")
         
         self._stopped = False
         output_file_path = Path(output_path)

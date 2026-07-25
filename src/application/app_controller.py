@@ -692,7 +692,7 @@ class ApplicationController(QObject):
         self._is_stopped = True
         self._terminate_prep_worker()
         self._cleanup_active_resources()
-        self._generation_service.stop()
+        self._generation_service.stop(wait=True)
         self._assembly_service.stop()
         
         current_task = self._get_current_task()
@@ -708,7 +708,7 @@ class ApplicationController(QObject):
         logging.info("Stopping all generation tasks...")
 
         self._terminate_prep_worker()
-        self._generation_service.stop()
+        self._generation_service.stop(wait=True)
         self._assembly_service.stop()
         
         self._queue_service.clear_all_tasks()

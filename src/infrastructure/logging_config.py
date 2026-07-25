@@ -33,14 +33,19 @@ class PiiMaskingFilter(logging.Filter):
                 record.msg = record.msg.replace(home, "~")
         return True
 
-def setup_logging(log_dir: str = "logs") -> None:
+def setup_logging(log_dir: Optional[str] = None) -> None:
     """
     Configures the application logging system with Correlation IDs and masking.
+    Logs are written to /home/bnerushev/PycharmProjects/ReadAloud/logs by default.
     """
     try:
-        log_path = Path(log_dir)
+        if log_dir is None:
+            project_root = Path(__file__).parent.parent.parent
+            log_path = project_root / "logs"
+        else:
+            log_path = Path(log_dir)
+
         log_path.mkdir(exist_ok=True, parents=True)
-        
         log_file = log_path / "app.log"
         
         # Determine log level from environment or default to DEBUG

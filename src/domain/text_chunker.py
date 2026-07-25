@@ -79,6 +79,10 @@ class TextChunker:
                 # Include the space/tab in the current chunk if found
                 if end_position < len(text):
                     end_position += 1
+                
+                # Cap chunk length if no delimiter is found within 2x chunk_size
+                if end_position - current_position > chunk_size * 2:
+                    end_position = target_end
             
             chunk_text = text[current_position:end_position]
             

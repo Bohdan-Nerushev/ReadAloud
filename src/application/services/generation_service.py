@@ -138,11 +138,11 @@ class GenerationService(QObject):
         """Returns True if generation is currently paused."""
         return self._thread_manager is not None and self._thread_manager.is_paused()
 
-    def stop(self) -> None:
+    def stop(self, wait: bool = False) -> None:
         """Stops all generation work immediately and closes active threads."""
         self._is_stopped = True
         if self._thread_manager:
-            self._thread_manager.stop()
+            self._thread_manager.stop(wait=wait)
 
     # ------------------------------------------------------------------
     # Progress queries

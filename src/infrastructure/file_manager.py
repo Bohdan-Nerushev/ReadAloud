@@ -141,6 +141,8 @@ class FileManager:
             Exception: If deletion fails for any directory
         """
         for directory in directories:
+            if not directory or not isinstance(directory, str) or not directory.strip():
+                continue
             dir_path = self._get_path(directory)
             if dir_path.exists() and dir_path.is_dir():
                 try:

@@ -15,6 +15,21 @@ from src.domain.exceptions import TransientGenerationException, FatalGenerationE
 from src.domain.models import AudioChunk
 
 
+import aiohttp
+
+
+class SafeTCPConnector(aiohttp.TCPConnector):
+    """
+    TCPConnector wrapper that prevents aiohttp.ClientSession from closing the 
+    underlying connection pool. It only closes when real_close is explicitly called.
+    """
+    async def close(self) -> None:
+        pass
+
+    async def real_close(self) -> None:
+        await super().close()
+
+
 import os
 import socket
 
@@ -204,8 +219,7 @@ class AudioGenerator:
 
         async def _init_connector() -> None:
             try:
-                import aiohttp
-                self._tcp_connector = aiohttp.TCPConnector(
+                self._tcp_connector = SafeTCPConnector(
                     limit=30,
                     ttl_dns_cache=300,
                     enable_cleanup_closed=True,
@@ -562,9 +576,10 @@ class AudioGenerator:
         if hasattr(self, '_tcp_connector') and self._tcp_connector:
             try:
                 if self._loop and self._loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self._tcp_connector.close(), self._loop)
-            except Exception:
-                pass
+                    fut = asyncio.run_coroutine_threadsafe(self._tcp_connector.real_close(), self._loop)
+                    fut.result(timeout=2.0)
+            except Exception as e:
+                logging.warning(f"Error closing SafeTCPConnector: {e}")
 
         if hasattr(self, '_loop') and self._loop:
             if self._loop.is_running():

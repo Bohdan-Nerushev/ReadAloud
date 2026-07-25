@@ -121,7 +121,8 @@ class ThreadManager:
                 self._pause_event.set()
     
     def stop(
-            self
+            self,
+            wait: bool = False
     ) -> None:
         """Stops all task execution and shuts down the thread pool."""
         with self._state_lock:
@@ -132,7 +133,7 @@ class ThreadManager:
             future.cancel()
         
         self._executor.shutdown(
-            wait=False,
+            wait=wait,
             cancel_futures=True
         )
     
