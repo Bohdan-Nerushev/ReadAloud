@@ -17,42 +17,39 @@ from src.application.services.persistence_service import PersistenceService
 
 class TestPersistenceService(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-        self.temp_file.close()
-        self.state_file_path = self.temp_file.name
+        self.temp_dir_obj = tempfile.TemporaryDirectory()
+        self.temp_dir = self.temp_dir_obj.name
+
+        self.state_file_path = os.path.join(self.temp_dir, "state.json")
         self.persistence_service = PersistenceService(self.state_file_path)
 
-        self.path_patcher = patch('src.domain.models.Path')
-        self.mock_path = self.path_patcher.start()
-        self.mock_path_instance = self.mock_path.return_value
-        self.mock_path_instance.exists.return_value = True
-        self.mock_path_instance.is_file.return_value = True
-        self.mock_path_instance.is_dir.return_value = True
+        self.input1 = os.path.join(self.temp_dir, "input1.txt")
+        self.input2 = os.path.join(self.temp_dir, "input2.txt")
+        Path(self.input1).write_text("dummy 1", encoding="utf-8")
+        Path(self.input2).write_text("dummy 2", encoding="utf-8")
 
         self.config1 = ProjectConfig(
             project_name="Project1",
-            input_file_path="/mock/input1.txt",
+            input_file_path=self.input1,
             language="en",
             gender="male",
             thread_count=4,
-            output_dir_path="/mock/output1",
+            output_dir_path=self.temp_dir,
             speed=1.0
         )
 
         self.config2 = ProjectConfig(
             project_name="Project2",
-            input_file_path="/mock/input2.txt",
+            input_file_path=self.input2,
             language="uk",
             gender="female",
             thread_count=10,
-            output_dir_path="/mock/output2",
+            output_dir_path=self.temp_dir,
             speed=1.5
         )
 
     def tearDown(self) -> None:
-        self.path_patcher.stop()
-        if os.path.exists(self.state_file_path):
-            os.unlink(self.state_file_path)
+        self.temp_dir_obj.cleanup()
 
     def test_save_and_load_empty_queue(self) -> None:
         success = self.persistence_service.save_state([])
@@ -120,6 +117,35 @@ class TestPersistenceService(unittest.TestCase):
         restored = self.persistence_service.load_state()
         self.assertEqual(restored, [])
         self.assertFalse(os.path.exists(self.state_file_path))
+
+    def test_missing_input_file_skips_task_and_prunes_state(self) -> None:
+        """Verifies that tasks with deleted input files are skipped with warning and pruned from state."""
+        input_file = os.path.join(self.temp_dir, "temp_story.txt")
+        Path(input_file).write_text("Hello world", encoding="utf-8")
+
+        config = ProjectConfig(
+            project_name="TempProject",
+            input_file_path=input_file,
+            output_dir_path=self.temp_dir,
+            language="en",
+            gender="male",
+            speed=1.0,
+            thread_count=1
+        )
+        task = GenerationTask(config=config)
+        self.persistence_service.save_state([task])
+        self.assertTrue(os.path.exists(self.state_file_path))
+
+        # Delete input file to simulate file removal/cleanup
+        os.remove(input_file)
+
+        # Loading state should skip the missing task and prune state
+        restored = self.persistence_service.load_state()
+        self.assertEqual(len(restored), 0)
+
+        # Re-loading should return 0 tasks cleanly
+        restored_after_prune = self.persistence_service.load_state()
+        self.assertEqual(len(restored_after_prune), 0)
 
 
 if __name__ == '__main__':

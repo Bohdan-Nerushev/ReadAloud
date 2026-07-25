@@ -76,7 +76,7 @@ class TestE2EFullPipeline(unittest.TestCase):
         5. Verification of Output MP3 existence and Task Completion
         """
         # Create Container and services
-        container = Container()
+        container = Container(state_file_path=os.path.join(self.temp_dir, "test_state.json"))
         controller: ApplicationController = container.app_controller
 
         config = ProjectConfig(
@@ -156,7 +156,7 @@ class TestE2EFullPipeline(unittest.TestCase):
 
     def test_e2e_queue_multi_file_processing(self) -> None:
         """Tests E2E queue processing when multiple 2-3 chunk files are queued sequentially."""
-        container = Container()
+        container = Container(state_file_path=os.path.join(self.temp_dir, "test_state.json"))
         controller: ApplicationController = container.app_controller
 
         # Create two files

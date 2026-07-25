@@ -28,7 +28,8 @@ class Container:
     IoC Container for the ReadAloud application.
     """
     
-    def __init__(self) -> None:
+    def __init__(self, state_file_path: Optional[str] = None) -> None:
+        self._state_file_path = state_file_path
         self._queue_service: Optional[QueueService] = None
         self._text_processor: Optional[TextProcessor] = None
         self._text_chunker: Optional[TextChunker] = None
@@ -106,8 +107,11 @@ class Container:
     @property
     def persistence_service(self) -> PersistenceService:
         if not self._persistence_service:
-            project_root = Path(__file__).parent.parent.parent
-            state_file = project_root / ".data" / "state.json"
+            if self._state_file_path:
+                state_file = Path(self._state_file_path)
+            else:
+                project_root = Path(__file__).parent.parent.parent
+                state_file = project_root / ".data" / "state.json"
             self._persistence_service = PersistenceService(str(state_file.absolute()))
         return self._persistence_service
 

@@ -141,10 +141,16 @@ class PersistenceService:
 
     def _parse_tasks(self, data: List[Dict[str, Any]]) -> List[GenerationTask]:
         tasks = []
+        skipped = 0
         for item in data:
             task = self._dict_to_task(item)
             if task:
                 tasks.append(task)
+            else:
+                skipped += 1
+        if skipped > 0:
+            logging.info(f"Pruning {skipped} stale/invalid task(s) from state file.")
+            self.save_state(tasks)
         return tasks
 
     def _handle_corrupted(self) -> None:
@@ -180,9 +186,17 @@ class PersistenceService:
     def _dict_to_task(self, data: Dict[str, Any]) -> Optional[GenerationTask]:
         try:
             cfg_data = data["config"]
+            input_file = cfg_data.get("input_file_path", "")
+            if not input_file or not Path(input_file).expanduser().exists():
+                logging.warning(
+                    f"Skipping task '{cfg_data.get('project_name')}' ({data.get('id')}): "
+                    f"Input file no longer exists: {input_file}"
+                )
+                return None
+
             config = ProjectConfig(
                 project_name=cfg_data["project_name"],
-                input_file_path=cfg_data["input_file_path"],
+                input_file_path=input_file,
                 language=cfg_data["language"],
                 gender=cfg_data["gender"],
                 thread_count=cfg_data["thread_count"],
