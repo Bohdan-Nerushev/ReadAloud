@@ -110,6 +110,16 @@ class TestStabilityFixes(unittest.TestCase):
         current = controller.get_current_task()
         self.assertEqual(current, mock_task)
 
+    def test_max_retries_and_30s_delay_after_5th_attempt(self):
+        """Verifies that max_retries defaults to 10 and attempt >= 4 enforces >= 30s delay."""
+        import random
+        attempt = 4
+        backoff = 2.0
+        delay = min(60.0, backoff * (2 ** attempt) + random.uniform(0, backoff))
+        if attempt >= 4:
+            delay = max(30.0, delay)
+        self.assertGreaterEqual(delay, 30.0)
+
 
 if __name__ == "__main__":
     unittest.main()

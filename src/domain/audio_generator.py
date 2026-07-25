@@ -288,7 +288,7 @@ class AudioGenerator:
             output_dir: str,
             chunk_callback: Optional[Callable[[int, str, float], None]] = None,
             max_workers: int = 10,
-            max_retries: int = 5,
+            max_retries: int = 10,
             backoff: float = 2.0,
     ) -> List[Tuple[str, float]]:
         """
@@ -444,7 +444,7 @@ class AudioGenerator:
             chunk: AudioChunk,
             voice: str,
             output_path: Path,
-            max_retries: int = 5,
+            max_retries: int = 10,
             backoff: float = 2.0,
     ) -> Tuple[str, float]:
         """
@@ -555,6 +555,8 @@ class AudioGenerator:
 
                     # Exponential backoff with full jitter (capped at 60s max)
                     delay = min(60.0, backoff * (2 ** attempt) + random.uniform(0, backoff))
+                    if attempt >= 4:
+                        delay = max(30.0, delay)
                     msg = str(exc).lower()
                     if "cannot schedule" in msg or "shutdown" in msg:
                         try:

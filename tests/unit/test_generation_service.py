@@ -63,7 +63,7 @@ class TestGenerationService(unittest.TestCase):
             batch, "en", "male", "/mock/out",
             chunk_callback=self.service._on_chunk_generated_callback,
             max_workers=5,
-            max_retries=5
+            max_retries=10
         )
 
     @patch('src.application.services.generation_service.ThreadManager')

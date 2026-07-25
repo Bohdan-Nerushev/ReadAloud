@@ -120,7 +120,7 @@ class GenerationService(QObject):
                 task.config.gender,
                 correlation_id,
                 max_workers,
-                7
+                10
             )
 
     def pause(self) -> bool:
@@ -217,7 +217,7 @@ class GenerationService(QObject):
             gender: str,
             correlation_id: str,
             max_workers: int,
-            max_retries: int = 5
+            max_retries: int = 10
     ) -> None:
         """
         Executed by a worker thread. Generates audio for a batch of chunks.
