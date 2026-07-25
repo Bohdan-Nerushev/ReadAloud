@@ -99,6 +99,18 @@ class TestAudioAssembler(unittest.TestCase):
                     self.assembler.assemble_audio(audio_files, "out.mp3")
                 self.assertIn("ffmpeg exited with code 1", str(cm.exception))
 
+    def test_ffmpeg_command_explicit_mp3_format(self):
+        """Verifies -f mp3 is explicitly passed to ffmpeg to prevent exit code 234 on temporary file extensions."""
+        cmd = self.assembler._build_ffmpeg_command(
+            list_path=Path("/tmp/concat.txt"),
+            output_file_path=Path("/tmp/part_0_tmp.mp3"),
+            speed=1.0,
+            copy_codec=False
+        )
+        self.assertEqual(cmd[-3], "-f")
+        self.assertEqual(cmd[-2], "mp3")
+        self.assertEqual(cmd[-1], "/tmp/part_0_tmp.mp3")
+
     def test_stop_terminates_processes(self):
         """test_stop_terminates_processes: Verifies active ffmpeg processes are terminated on stop."""
         mock_p = MagicMock()

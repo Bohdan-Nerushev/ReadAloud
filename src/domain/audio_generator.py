@@ -330,9 +330,13 @@ class AudioGenerator:
             future = asyncio.run_coroutine_threadsafe(_run_batch(), self._loop)
             # ISSUE-7 FIX: timeout prevents indefinite blocking if the loop stalls.
             return future.result(timeout=batch_timeout)
+        except TimeoutError as e:
+            msg = f"Batch generation timed out after {batch_timeout:.1f}s"
+            logging.error(msg, exc_info=True)
+            raise TimeoutError(msg) from e
         except Exception as e:
             logging.error(f"Batch generation failed: {e}", exc_info=True)
-            raise Exception(f"Batch generation failed: {str(e)}") from e
+            raise Exception(f"Batch generation failed: {str(e) or type(e).__name__}") from e
 
     # ------------------------------------------------------------------
     # Internal async implementation

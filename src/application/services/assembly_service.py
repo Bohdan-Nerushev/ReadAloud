@@ -197,7 +197,7 @@ class AssemblyService(QObject):
             return
 
         part_path = Path(output_dir) / f"part_{batch_index}.mp3"
-        tmp_part_path = Path(output_dir) / f"part_{batch_index}.mp3.tmp"
+        tmp_part_path = Path(output_dir) / f"part_{batch_index}_tmp.mp3"
         logging.info(f"Submitting batch {batch_index} for assembly ({len(files)} files)")
 
         # Verify all chunk files in this batch are valid

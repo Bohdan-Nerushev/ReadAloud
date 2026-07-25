@@ -140,7 +140,7 @@ class AudioAssembler:
             cmd.extend(['-c:a', 'libmp3lame', '-ar', '24000', '-ac', '1'])
             if abs(speed - 1.0) > 0.01:
                 cmd.extend(['-filter:a', f'atempo={speed}'])
-        cmd.extend(['-vn', '-y', str(output_file_path)])
+        cmd.extend(['-vn', '-y', '-f', 'mp3', str(output_file_path)])
         return cmd
 
     def _execute_ffmpeg(
