@@ -157,5 +157,44 @@ class TestGUILogic(unittest.TestCase):
         progress_display.reset()
         progress_display.set_complete()
 
+    def test_failed_task_retry_button_and_toggle(self):
+        """Verifies that FAILED tasks display a Retry button and can be toggled back to PENDING."""
+        import tempfile
+        from pathlib import Path
+        from src.gui.widgets.queue_item import QueueItemWidget
+        from src.application.services.queue_service import QueueService
+
+        tf = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
+        tf.write(b"Hello world")
+        tf.close()
+        try:
+            config = ProjectConfig(
+                project_name="FailedTask",
+                input_file_path=tf.name,
+                output_dir_path="/tmp",
+                language="en",
+                gender="male",
+                speed=1.0,
+                thread_count=1
+            )
+            task = GenerationTask(config=config)
+            task.update_status(TaskStatus.FAILED, "Generation failed: 59 chunk(s) missing")
+
+            widget = QueueItemWidget(task)
+            self.assertEqual(widget.pause_button.text(), "Retry")
+            self.assertTrue(widget.pause_button.isEnabled())
+
+            queue_service = QueueService()
+            queue_service.add_task(config)
+            task_in_q = queue_service._task_queue[0]
+            task_in_q.update_status(TaskStatus.FAILED, "Failed")
+
+            res = queue_service.toggle_task_pause(str(task_in_q.id))
+            self.assertIsNotNone(res)
+            self.assertEqual(res.status, TaskStatus.PENDING)
+        finally:
+            Path(tf.name).unlink(missing_ok=True)
+
+
 if __name__ == '__main__':
     unittest.main()

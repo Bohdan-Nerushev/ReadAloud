@@ -254,9 +254,11 @@ class QueueItemWidget(QWidget):
         self.delete_button.setEnabled(True)
         self.delete_button.show()
         
-        if task.status in (TaskStatus.PROCESSING, TaskStatus.PAUSED, TaskStatus.PENDING):
+        if task.status in (TaskStatus.PROCESSING, TaskStatus.PAUSED, TaskStatus.PENDING, TaskStatus.FAILED, TaskStatus.STOPPED):
             if task.status == TaskStatus.PAUSED:
                 self.pause_button.setText("Resume")
+            elif task.status in (TaskStatus.FAILED, TaskStatus.STOPPED):
+                self.pause_button.setText("Retry")
             else:
                 self.pause_button.setText("Pause")
             self.pause_button.setEnabled(True)

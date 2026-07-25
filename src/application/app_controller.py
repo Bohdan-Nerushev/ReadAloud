@@ -670,8 +670,9 @@ class ApplicationController(QObject):
             return
 
         if current_task and str(current_task.id) == task_id:
-            if current_task.status == TaskStatus.PAUSED:
-                if not self._generation_service._thread_manager:
+            if current_task.status in (TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.STOPPED):
+                if not self._generation_service._thread_manager or current_task.status in (TaskStatus.FAILED, TaskStatus.STOPPED):
+                    current_task.update_status(TaskStatus.PENDING, "Resuming...")
                     self._start_task(current_task)
                     return
 
@@ -834,6 +835,7 @@ class ApplicationController(QObject):
             self._text_dir = task.text_dir
             self._audio_dir = task.audio_dir
             self._audio_files = [None] * len(chunks)
+            self._retry_sweep_count = 0
             
             self._assembly_service.reset(len(chunks))
             

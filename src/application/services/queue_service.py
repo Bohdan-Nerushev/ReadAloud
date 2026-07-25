@@ -80,11 +80,11 @@ class QueueService(QObject):
 
     def toggle_task_pause(self, task_id: str) -> Optional[GenerationTask]:
         """
-        Toggles the pause status of a task in the queue.
+        Toggles the pause or retry status of a task in the queue.
         """
         for task in self._task_queue:
             if str(task.id) == task_id:
-                if task.status == TaskStatus.PAUSED:
+                if task.status in (TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.STOPPED):
                     task.update_status(TaskStatus.PENDING, "Pending")
                 else:
                     task.update_status(TaskStatus.PAUSED, "Paused")
