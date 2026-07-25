@@ -137,7 +137,7 @@ class AudioAssembler:
         if copy_codec:
             cmd.extend(['-c', 'copy'])
         else:
-            cmd.extend(['-c:a', 'libmp3lame'])
+            cmd.extend(['-c:a', 'libmp3lame', '-ar', '24000', '-ac', '1'])
             if abs(speed - 1.0) > 0.01:
                 cmd.extend(['-filter:a', f'atempo={speed}'])
         cmd.extend(['-vn', '-y', str(output_file_path)])
@@ -160,7 +160,7 @@ class AudioAssembler:
         try:
             stderr_output = self._monitor_process(process, total_duration, speed, callback)
             if process.returncode != 0:
-                if self._stopped or process.returncode in (-15, -9, 234):
+                if self._stopped or process.returncode in (-15, -9):
                     raise Exception(f"ffmpeg process was cancelled or terminated (code {process.returncode})")
                 err_detail = stderr_output.strip() if stderr_output else "Unknown ffmpeg error"
                 raise Exception(f"ffmpeg exited with code {process.returncode}: {err_detail}")

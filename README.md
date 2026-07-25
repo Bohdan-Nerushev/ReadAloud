@@ -8,14 +8,17 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 
 ## Table of Contents
 
-1. [🛠 System Requirements](#1-system-requirements)
-2. [Installation & Setup](#2-installation-setup)
-   - [One-line Installation](#21-one-line-installation)
-   - [Manual Installation](#22-manual-installation-alternative)
-   - [Uninstallation](#23-uninstallation)
-3. [Usage](#3-usage)
-   - [Starting the Application](#31-starting-the-application)
-   - [Running Tests](#32-running-tests)
+- [ReadAloud - High-Performance Text-to-Speech Application](#readaloud---high-performance-text-to-speech-application)
+  - [Table of Contents](#table-of-contents)
+  - [1. 🛠 System Requirements](#1--system-requirements)
+  - [2. Installation \& Setup](#2-installation--setup)
+    - [2.1. One-line Installation](#21-one-line-installation)
+    - [2.2. Manual Installation (Alternative)](#22-manual-installation-alternative)
+    - [2.2.1. Installing System Dependencies](#221-installing-system-dependencies)
+    - [2.3. Uninstallation](#23-uninstallation)
+  - [3. Usage](#3-usage)
+    - [3.1. Starting the Application](#31-starting-the-application)
+    - [3.2. Running Tests](#32-running-tests)
 
 ## 1. 🛠 System Requirements
 
@@ -102,3 +105,5 @@ To execute the comprehensive test suite (unit, integration, concurrency, and UI 
 ```bash
 ./scripts/run_tests.sh
 ```
+
+venv/bin/python -m pytest -v

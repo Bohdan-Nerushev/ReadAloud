@@ -6,7 +6,7 @@ This module defines the widget used to display the list of all tasks.
 
 from typing import Dict
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QLabel
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from src.domain.models import GenerationTask
 from src.gui.widgets.queue_item import QueueItemWidget
 from src.gui.styles import Styles, Palette
@@ -70,9 +70,11 @@ class QueueListWidget(QWidget):
         widget.deleteRequested.connect(self.taskDeleteRequested.emit)
         widget.pauseRequested.connect(self.taskPauseRequested.emit)
         
-        item.setSizeHint(widget.sizeHint())
+        hint = widget.sizeHint()
+        if not isinstance(hint, QSize):
+            hint = QSize(600, 165)
+        item.setSizeHint(hint)
         
-        self._list_widget.addItem(item)
         self._list_widget.setItemWidget(
             item,
             widget
@@ -115,6 +117,9 @@ class QueueListWidget(QWidget):
                 widget,
                 QueueItemWidget
             ) and str(widget.task_id) == task_id:
-                self._list_widget.takeItem(i)
+                taken_item = self._list_widget.takeItem(i)
+                self._list_widget.removeItemWidget(taken_item)
+                if widget:
+                    widget.deleteLater()
                 del self._items[task_id]
                 break

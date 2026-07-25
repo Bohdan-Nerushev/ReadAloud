@@ -258,6 +258,10 @@ class ApplicationController(QObject):
         if task:
             self._start_task(task)
 
+    def get_current_task(self) -> Optional[GenerationTask]:
+        """Returns the current task being processed."""
+        return self._get_current_task()
+
     def _get_current_task(self) -> Optional[GenerationTask]:
         """Returns the current task being processed."""
         return self._queue_service.get_current_task()

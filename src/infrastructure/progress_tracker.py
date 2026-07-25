@@ -52,6 +52,11 @@ class ProgressTracker:
             self._recent_timings = []
             self._completed_chunks = completed_chunks
 
+    def reset_completed_count(self, completed_chunks: int) -> None:
+        """Resets completed chunks counter to reflect actual valid chunks."""
+        with self._lock:
+            self._completed_chunks = max(0, min(completed_chunks, self._total_chunks))
+
 
     def pause(self) -> None:
         """Records the start of a pause period."""

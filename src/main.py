@@ -105,19 +105,22 @@ class ReadAloudApplication:
         is_user_modified = self._window.project_input.is_user_modified()
 
         configs = []
+        existing_names = set()
         for file_path in files:
             stem = Path(file_path).stem
             if len(files) > 1:
-                proj_name = re.sub(r'[^\w\-. ]', '_', stem).strip()
-                if not proj_name:
-                    proj_name = "ReadAloud_Project"
+                base_name = re.sub(r'[^\w\-. ]', '_', stem).strip() or "ReadAloud_Project"
+                proj_name = base_name
+                counter = 1
+                while proj_name in existing_names:
+                    proj_name = f"{base_name}_{counter}"
+                    counter += 1
+                existing_names.add(proj_name)
             else:
                 if is_user_modified and user_project_name:
                     proj_name = user_project_name
                 else:
-                    proj_name = re.sub(r'[^\w\-. ]', '_', stem).strip()
-                    if not proj_name:
-                        proj_name = "ReadAloud_Project"
+                    proj_name = re.sub(r'[^\w\-. ]', '_', stem).strip() or "ReadAloud_Project"
 
             config = ProjectConfig(
                 project_name=proj_name,
@@ -148,7 +151,16 @@ class ReadAloudApplication:
             speed: float
     ) -> None:
         """Handles progress update signals."""
-        self._window.progress_display.update_progress(completed, total, eta, speed)
+        try:
+            task = self._controller.get_current_task()
+            config = getattr(task, 'config', None) if task else None
+            task_name = getattr(config, 'project_name', '') if config else ""
+            file_path = getattr(config, 'input_file_path', '') if config else ""
+            self._window.progress_display.update_progress(
+                completed, total, eta, speed, task_name=task_name, file_path=file_path
+            )
+        except Exception as e:
+            logging.error(f"Error updating progress display: {e}", exc_info=True)
 
     def _on_assembly_progress_updated(
             self,
@@ -220,6 +232,15 @@ class ReadAloudApplication:
         if task.status == TaskStatus.COMPLETED:
             # Remove from UI after task is done
             self._window.queue_list.remove_task(str(task.id))
+
+
+def _global_exception_handler(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    logging.critical("Unhandled exception captured by global hook", exc_info=(exc_type, exc_value, exc_traceback))
+
+sys.excepthook = _global_exception_handler
 
 
 def main() -> None:

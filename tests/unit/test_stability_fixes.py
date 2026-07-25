@@ -1,9 +1,13 @@
 import unittest
 import asyncio
 import aiohttp
+from pathlib import Path
 from unittest.mock import MagicMock, patch
-from src.domain.models import TaskStatus
+from src.domain.models import TaskStatus, AudioChunk, ProjectConfig, GenerationTask
 from src.domain.audio_generator import SafeTCPConnector
+from src.domain.audio_assembler import AudioAssembler
+from src.infrastructure.progress_tracker import ProgressTracker
+from src.application.services.generation_service import GenerationService
 from src.application.app_controller import ApplicationController
 
 
@@ -60,6 +64,51 @@ class TestStabilityFixes(unittest.TestCase):
         generation_service.stop.reset_mock()
         controller.stop_generation()
         generation_service.stop.assert_called_with(wait=True)
+
+    def test_progress_tracker_reset_completed_count(self):
+        """Verifies ProgressTracker.reset_completed_count updates progress counters correctly."""
+        tracker = ProgressTracker(total_chunks=100)
+        tracker.start(completed_chunks=100)
+        self.assertEqual(tracker.get_completed_count(), 100)
+        self.assertEqual(tracker.get_progress_percentage(), 100.0)
+
+        # Reset completed count when 10 chunks need retry
+        tracker.reset_completed_count(90)
+        self.assertEqual(tracker.get_completed_count(), 90)
+        self.assertEqual(tracker.get_progress_percentage(), 90.0)
+
+    def test_audio_assembler_ffmpeg_command_standardizes_audio_format(self):
+        """Verifies ffmpeg command includes -ar 24000 and -ac 1 parameters when re-encoding."""
+        assembler = AudioAssembler()
+        cmd = assembler._build_ffmpeg_command(
+            list_path=Path("/tmp/concat.txt"),
+            output_file_path=Path("/tmp/output.mp3"),
+            speed=1.0,
+            copy_codec=False
+        )
+        self.assertIn("-ar", cmd)
+        self.assertIn("24000", cmd)
+        self.assertIn("-ac", cmd)
+        self.assertIn("1", cmd)
+
+    def test_application_controller_get_current_task(self):
+        """Verifies ApplicationController.get_current_task public method returns queue current task."""
+        queue_service = MagicMock()
+        mock_task = MagicMock(spec=GenerationTask)
+        queue_service.get_current_task.return_value = mock_task
+
+        controller = ApplicationController(
+            queue_service=queue_service,
+            text_processor=MagicMock(),
+            text_chunker=MagicMock(),
+            file_manager=MagicMock(),
+            generation_service=MagicMock(),
+            assembly_service=MagicMock(),
+            persistence_service=MagicMock()
+        )
+
+        current = controller.get_current_task()
+        self.assertEqual(current, mock_task)
 
 
 if __name__ == "__main__":

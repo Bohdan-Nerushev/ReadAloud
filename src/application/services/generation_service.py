@@ -98,6 +98,10 @@ class GenerationService(QObject):
             return
 
         logging.info(f"Executing retry sweep for {len(chunks_to_retry)} chunk(s)...")
+        if self._progress_tracker and self._chunks:
+            valid_completed = max(0, len(self._chunks) - len(chunks_to_retry))
+            self._progress_tracker.reset_completed_count(valid_completed)
+
         correlation_id = str(task.id)
         max_workers = min(task.config.thread_count, len(chunks_to_retry))
 
