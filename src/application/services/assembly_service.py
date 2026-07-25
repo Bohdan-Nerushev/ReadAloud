@@ -200,13 +200,13 @@ class AssemblyService(QObject):
         tmp_part_path = Path(output_dir) / f"part_{batch_index}.mp3.tmp"
         logging.info(f"Submitting batch {batch_index} for assembly ({len(files)} files)")
 
-        # Filter out any None entries (permanently failed chunks)
-        valid_pairs = [(f, d) for f, d in zip(files, durations) if f is not None]
-        if not valid_pairs:
-            logging.warning(f"Batch {batch_index} has no valid chunk files — skipping batch assembly.")
+        # Verify all chunk files in this batch are valid
+        if any(f is None or not Path(f).exists() or Path(f).stat().st_size == 0 for f in files):
+            logging.error(f"Batch {batch_index} contains missing or empty chunk file(s) — aborting batch assembly.")
             return
-        valid_files = [f for f, d in valid_pairs]
-        valid_durations = [d for f, d in valid_pairs]
+
+        valid_files = list(files)
+        valid_durations = list(durations)
 
         def _assemble_task() -> str:
             set_correlation_id(correlation_id)
@@ -240,11 +240,16 @@ class AssemblyService(QObject):
         def _done_callback(fut: Future) -> None:
             try:
                 result_path = fut.result()
-                with self._state_lock:
-                    self._batch_results[batch_index] = result_path
-                self.batchAssemblyFinished.emit(batch_index, result_path)
+                if result_path:
+                    with self._state_lock:
+                        self._batch_results[batch_index] = result_path
+                    self.batchAssemblyFinished.emit(batch_index, result_path)
             except Exception as e:
-                self.assemblyError.emit(f"Batch {batch_index} failed: {str(e)}")
+                err_str = str(e)
+                if "cancelled" in err_str or "terminated" in err_str or self._executor is None:
+                    logging.info(f"Batch {batch_index} assembly cancelled or stopped.")
+                else:
+                    self.assemblyError.emit(f"Batch {batch_index} failed: {err_str}")
 
         future.add_done_callback(_done_callback)
 
@@ -294,6 +299,14 @@ class AssemblyService(QObject):
         if futures:
             wait(futures)
 
+        # Strictly enforce complete chunk files
+        missing = [i for i, f in enumerate(all_chunk_files) if f is None or not Path(f).exists() or Path(f).stat().st_size == 0]
+        if missing:
+            raise ValueError(
+                f"Cannot assemble final audio: {len(missing)} chunk(s) missing or empty out of {len(all_chunk_files)}. "
+                f"Missing chunk numbers: {[i + 1 for i in missing[:10]]}"
+            )
+
         # Determine assembly strategy
         parts, use_fast = self._get_assembly_parts()
 
@@ -301,10 +314,7 @@ class AssemblyService(QObject):
             if use_fast and parts:
                 self._assemble_fast(parts, output_path, correlation_id)
             else:
-                valid_files = [f for f in all_chunk_files if f is not None]
-                if not valid_files:
-                    raise Exception("No valid audio files to assemble")
-                self._assemble_full(valid_files, output_path, speed, correlation_id)
+                self._assemble_full(all_chunk_files, output_path, speed, correlation_id)
         finally:
             # Cleanup intermediate part files
             if parts:

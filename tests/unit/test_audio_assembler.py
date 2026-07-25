@@ -39,8 +39,10 @@ class TestAudioAssembler(unittest.TestCase):
         with patch("builtins.open", mock_open()) as mocked_file:
             # We also need to avoid path issues with Path().unlink() in finally block
             with patch("src.domain.audio_assembler.Path.exists", return_value=True):
-                with patch("src.domain.audio_assembler.Path.unlink"):
-                    self.assembler.assemble_audio(audio_files, output_path)
+                with patch("src.domain.audio_assembler.Path.stat") as mock_stat:
+                    mock_stat.return_value.st_size = 100
+                    with patch("src.domain.audio_assembler.Path.unlink"):
+                        self.assembler.assemble_audio(audio_files, output_path)
                     
                     # Verify open was called for concat file
                     # The filename is random (uuid), so we check if any call matches

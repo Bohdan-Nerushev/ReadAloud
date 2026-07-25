@@ -39,21 +39,31 @@ class TestAssemblyService(unittest.TestCase):
         self.service.reset(total_chunks=80) # 2 batches of 40
         self.service._batch_results = {0: "part0.mp3", 1: "part1.mp3"}
         
-        with patch.object(self.service, '_assemble_fast') as mock_fast, \
-             patch.object(self.service, '_assemble_full') as mock_full:
-            self.service.assemble_final(Path("out.mp3"), [], 1.0, "test-id")
-            mock_fast.assert_called_once()
-            mock_full.assert_not_called()
+        with patch("src.application.services.assembly_service.Path") as mock_path:
+            mock_file = MagicMock()
+            mock_file.exists.return_value = True
+            mock_file.stat.return_value.st_size = 100
+            mock_path.return_value = mock_file
+            with patch.object(self.service, '_assemble_fast') as mock_fast, \
+                 patch.object(self.service, '_assemble_full') as mock_full:
+                self.service.assemble_final(Path("out.mp3"), ["chunk1.mp3", "chunk2.mp3"], 1.0, "test-id")
+                mock_fast.assert_called_once()
+                mock_full.assert_not_called()
 
         # Case 2: Batches not ready or missing -> Full assembly (fallback)
         self.service.reset(total_chunks=80)
         self.service._batch_results = {0: "part0.mp3"} # missing 1
         
-        with patch.object(self.service, '_assemble_fast') as mock_fast, \
-             patch.object(self.service, '_assemble_full') as mock_full:
-            self.service.assemble_final(Path("out.mp3"), ["chunk1.mp3", "chunk2.mp3"], 1.5, "test-id")
-            mock_fast.assert_not_called()
-            mock_full.assert_called_once()
+        with patch("src.application.services.assembly_service.Path") as mock_path:
+            mock_file = MagicMock()
+            mock_file.exists.return_value = True
+            mock_file.stat.return_value.st_size = 100
+            mock_path.return_value = mock_file
+            with patch.object(self.service, '_assemble_fast') as mock_fast, \
+                 patch.object(self.service, '_assemble_full') as mock_full:
+                self.service.assemble_final(Path("out.mp3"), ["chunk1.mp3", "chunk2.mp3"], 1.5, "test-id")
+                mock_fast.assert_not_called()
+                mock_full.assert_called_once()
 
     def test_cleanup_after_assembly(self):
         """test_cleanup_after_assembly: Verification of temporary file cleanup (part_X.mp3) after assembly."""
@@ -63,13 +73,15 @@ class TestAssemblyService(unittest.TestCase):
         with patch('src.application.services.assembly_service.Path') as mock_path_class:
             mock_p0 = MagicMock()
             mock_p1 = MagicMock()
+            mock_p0.stat.return_value.st_size = 100
+            mock_p1.stat.return_value.st_size = 100
             mock_path_class.side_effect = lambda p: mock_p0 if "part0" in p else mock_p1
             
             mock_p0.exists.return_value = True
             mock_p1.exists.return_value = True
             
-            # Run final assembly
-            self.service.assemble_final(Path("out.mp3"), [], 1.0, "test-id")
+            # Run final assembly with chunk files present
+            self.service.assemble_final(Path("out.mp3"), ["c1.mp3", "c2.mp3"], 1.0, "test-id")
             
             # Verify unlink was called for both parts
             mock_p0.unlink.assert_called_once()
@@ -83,9 +95,14 @@ class TestAssemblyService(unittest.TestCase):
         self.service.reset(total_chunks=80)
         self.assertIsNotNone(self.service._executor)
         
-        with patch.object(self.service._executor, 'submit') as mock_submit:
-            self.service.submit_batch_by_index(0, ["file1.mp3"], "/tmp", 1.0, "correlation-id")
-            mock_submit.assert_called_once()
+        with patch("src.application.services.assembly_service.Path") as mock_path:
+            mock_file = MagicMock()
+            mock_file.exists.return_value = True
+            mock_file.stat.return_value.st_size = 100
+            mock_path.return_value = mock_file
+            with patch.object(self.service._executor, 'submit') as mock_submit:
+                self.service.submit_batch_by_index(0, ["file1.mp3"], "/tmp", 1.0, "correlation-id")
+                mock_submit.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()

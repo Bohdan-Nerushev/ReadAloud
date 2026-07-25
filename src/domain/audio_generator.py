@@ -61,6 +61,9 @@ _TRANSIENT_ERROR_SUBSTRINGS = (
     "disconnected",
     "handshake",
     "endpoint",
+    "no audio",
+    "cannot schedule",
+    "shutdown",
 )
 
 
@@ -160,6 +163,7 @@ class AudioGenerator:
         self._loop_ready = threading.Event()
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._network_lock: Optional[asyncio.Lock] = None
+        self._tcp_connector: Optional[Any] = None
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -195,8 +199,24 @@ class AudioGenerator:
     def _start_background_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Runs the asyncio event loop in a dedicated thread."""
         asyncio.set_event_loop(loop)
-        self._semaphore = asyncio.Semaphore(5)
+        self._semaphore = asyncio.Semaphore(10)
         self._network_lock = asyncio.Lock()
+
+        async def _init_connector() -> None:
+            try:
+                import aiohttp
+                self._tcp_connector = aiohttp.TCPConnector(
+                    limit=30,
+                    ttl_dns_cache=300,
+                    enable_cleanup_closed=True,
+                    keepalive_timeout=60.0
+                )
+                logging.debug("Shared TCPConnector initialized successfully.")
+            except Exception as e:
+                logging.warning(f"Could not initialize shared TCPConnector: {e}")
+                self._tcp_connector = None
+
+        loop.create_task(_init_connector())
         self._loop_ready.set()
         loop.run_forever()
 
@@ -234,7 +254,7 @@ class AudioGenerator:
             gender: str,
             output_dir: str,
             chunk_callback: Optional[Callable[[int, str, float], None]] = None,
-            max_workers: int = 5,
+            max_workers: int = 10,
             max_retries: int = 5,
             backoff: float = 2.0,
     ) -> List[Tuple[str, float]]:
@@ -410,7 +430,12 @@ class AudioGenerator:
 
                 audio_path = output_path / f"{chunk.chunk_number}.mp3"
                 tmp_audio_path = output_path / f"{chunk.chunk_number}.mp3.tmp"
-                communicate = self.edge_tts.Communicate(chunk.text_content, voice)
+                if self._tcp_connector is not None:
+                    communicate = self.edge_tts.Communicate(
+                        chunk.text_content, voice, connector=self._tcp_connector
+                    )
+                else:
+                    communicate = self.edge_tts.Communicate(chunk.text_content, voice)
 
                 async with self._semaphore:
                     try:
@@ -435,7 +460,10 @@ class AudioGenerator:
                         # Create empty file for mock save calls in test environment
                         audio_path.touch()
 
-                    duration = self._get_file_duration_fast(str(audio_path))
+                loop = asyncio.get_running_loop()
+                duration = await loop.run_in_executor(
+                    None, self._get_file_duration_fast, str(audio_path)
+                )
 
                 logging.debug(
                     f"Chunk {chunk.chunk_number} generated successfully "
@@ -485,6 +513,13 @@ class AudioGenerator:
                     # Exponential backoff with full jitter (capped at 60s max)
                     delay = min(60.0, backoff * (2 ** attempt) + random.uniform(0, backoff))
                     msg = str(exc).lower()
+                    if "cannot schedule" in msg or "shutdown" in msg:
+                        try:
+                            if self._loop and self._loop.is_running():
+                                self._loop.set_default_executor(None)
+                        except Exception:
+                            pass
+
                     if "429" in msg or "rate limit" in msg or "too many requests" in msg:
                         self._rate_limit_reset_time = max(
                             self._rate_limit_reset_time,
@@ -523,7 +558,14 @@ class AudioGenerator:
             return 0.0
 
     def close(self) -> None:
-        """Stops and closes the background asyncio event loop."""
+        """Stops and closes the background asyncio event loop and connector."""
+        if hasattr(self, '_tcp_connector') and self._tcp_connector:
+            try:
+                if self._loop and self._loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self._tcp_connector.close(), self._loop)
+            except Exception:
+                pass
+
         if hasattr(self, '_loop') and self._loop:
             if self._loop.is_running():
                 self._loop.call_soon_threadsafe(self._loop.stop)

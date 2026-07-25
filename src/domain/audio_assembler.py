@@ -46,6 +46,7 @@ class AudioAssembler:
         """Initialize the AudioAssembler."""
         self._active_processes: Set[subprocess.Popen] = set()
         self._lock = threading.Lock()
+        self._stopped = False
     
     def assemble_audio(
             self,
@@ -62,6 +63,7 @@ class AudioAssembler:
         if not audio_files:
             raise ValueError("Audio files list cannot be empty")
         
+        self._stopped = False
         output_file_path = Path(output_path)
         output_dir = output_file_path.parent
             
@@ -82,7 +84,10 @@ class AudioAssembler:
             self._execute_ffmpeg(cmd, total_duration, speed, callback)
             
         except Exception as e:
-            logging.error(f"Failed to assemble audio files: {e}")
+            if self._stopped:
+                logging.info(f"Assembly process stopped: {e}")
+            else:
+                logging.error(f"Failed to assemble audio files: {e}")
             raise Exception(f"Failed to assemble audio files: {str(e)}") from e
         finally:
             if list_path.exists():
@@ -106,7 +111,14 @@ class AudioAssembler:
     def _create_concat_list(self, audio_files: List[str], list_path: Path) -> None:
         with open(list_path, 'w', encoding='utf-8') as f:
             for path in audio_files:
-                safe_path = Path(path).resolve().as_posix()
+                if not path:
+                    raise ValueError("Audio chunk path cannot be None or empty")
+                p = Path(path)
+                if not p.exists():
+                    raise ValueError(f"Audio chunk file does not exist: {path}")
+                if p.stat().st_size == 0:
+                    raise ValueError(f"Audio chunk file is empty (0 bytes): {path}")
+                safe_path = p.resolve().as_posix()
                 safe_path = safe_path.replace("'", "'\\''")
                 f.write(f"file '{safe_path}'\n")
 
@@ -123,6 +135,7 @@ class AudioAssembler:
         if copy_codec:
             cmd.extend(['-c', 'copy'])
         else:
+            cmd.extend(['-c:a', 'libmp3lame'])
             if abs(speed - 1.0) > 0.01:
                 cmd.extend(['-filter:a', f'atempo={speed}'])
         cmd.extend(['-vn', '-y', str(output_file_path)])
@@ -143,9 +156,12 @@ class AudioAssembler:
             _ACTIVE_PROCESSES.add(process) # Keep global for atexit fallback
 
         try:
-            self._monitor_process(process, total_duration, speed, callback)
+            stderr_output = self._monitor_process(process, total_duration, speed, callback)
             if process.returncode != 0:
-                raise Exception(f"ffmpeg exited with code {process.returncode}")
+                if self._stopped or process.returncode in (-15, -9, 234):
+                    raise Exception(f"ffmpeg process was cancelled or terminated (code {process.returncode})")
+                err_detail = stderr_output.strip() if stderr_output else "Unknown ffmpeg error"
+                raise Exception(f"ffmpeg exited with code {process.returncode}: {err_detail}")
         finally:
             with self._lock:
                 self._active_processes.discard(process)
@@ -159,11 +175,12 @@ class AudioAssembler:
         total_duration: float, 
         speed: float, 
         callback: callable
-    ) -> None:
+    ) -> str:
         import select
         start_time = time.time()
         last_activity = time.time()
         time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)")
+        stderr_lines: List[str] = []
 
         while True:
             # Non-blocking poll on stderr with 1 second timeout
@@ -175,6 +192,7 @@ class AudioAssembler:
             if rlist:
                 line = process.stderr.readline()
                 if line:
+                    stderr_lines.append(line)
                     last_activity = time.time()
                     if callback and total_duration > 0:
                         match = time_pattern.search(line)
@@ -194,7 +212,7 @@ class AudioAssembler:
                 # Read any remaining output lines
                 if process.stderr:
                     for line in process.stderr.readlines():
-                        pass
+                        stderr_lines.append(line)
                 break
 
             # Guard against completely hung ffmpeg process (no output for 3 minutes)
@@ -207,9 +225,12 @@ class AudioAssembler:
                     process.kill()
                 raise TimeoutError("ffmpeg process hung and was terminated.")
 
+        return "".join(stderr_lines[-20:])
+
     def stop(self) -> None:
         """Stops all active ffmpeg processes managed by this instance."""
         with self._lock:
+            self._stopped = True
             for p in list(self._active_processes):
                 try:
                     p.terminate()

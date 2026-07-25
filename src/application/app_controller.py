@@ -211,6 +211,7 @@ class ApplicationController(QObject):
         self._audio_files: List[Optional[str]] = []
 
         self._is_stopped = False
+        self._last_save_time = 0.0
 
         self._setup_service_subscriptions()
         self._setup_internal_connections()
@@ -225,9 +226,9 @@ class ApplicationController(QObject):
     def _setup_service_subscriptions(self) -> None:
         """Sets up subscriptions to queue service events."""
         self._queue_service.subscribe_task_added(self.taskAdded.emit)
-        self._queue_service.subscribe_task_added(lambda task: self._save_state())
+        self._queue_service.subscribe_task_added(lambda task: self._save_state(force=True))
         self._queue_service.subscribe_task_updated(self.taskUpdated.emit)
-        self._queue_service.subscribe_task_updated(lambda task: self._save_state())
+        self._queue_service.subscribe_task_updated(lambda task: self._save_state(force=False))
         self._queue_service.subscribe_status_changed(self.queueStatusChanged.emit)
 
 
@@ -300,6 +301,7 @@ class ApplicationController(QObject):
         self._audio_files = []
         self._text_dir = None
         self._audio_dir = None
+        self._retry_sweep_count = 0
 
         self.progressUpdated.emit(0, 0, "Preparing...", 0.0)
 
@@ -339,7 +341,7 @@ class ApplicationController(QObject):
             if task:
                 task.text_dir = text_dir
                 task.audio_dir = audio_dir
-                self._save_state()
+                self._save_state(force=True)
 
             logging.info(f"Preparation finished for task {task.id if task else 'unknown'}. Chunks: {len(chunks)}")
             self._start_generation_process()
@@ -506,34 +508,23 @@ class ApplicationController(QObject):
 
     def _on_batch_failed(self, batch: List[AudioChunk], error_msg: str) -> None:
         """
-        Callback when a batch fails after all retries.
-        Marks the task as failed only if no valid chunks were produced for the task.
+        Callback when a batch fails after per-chunk retries.
+        Logs error and prepares for task-level retry sweeps.
         """
         logging.error(
-            f"Batch generation failed ({len(batch)} chunk(s) failed: {error_msg})."
+            f"Batch generation failed ({len(batch)} chunk(s) failed: {error_msg}). "
+            "Unsynthesized chunks will be queued for task retry sweep."
         )
         valid_chunks_count = sum(1 for f in self._audio_files if f is not None)
-        if valid_chunks_count == 0 and len(self._chunks) > 0:
-            logging.error("All chunks in task failed permanently — failing task.")
+        if valid_chunks_count == 0 and len(self._chunks) > 0 and self._retry_sweep_count >= 3:
+            logging.error("All chunks in task failed permanently after retry sweeps — failing task.")
             self._handle_task_failure(f"Task synthesis error: {error_msg}")
-        else:
-            logging.warning(
-                f"Batch failed, but continuing pipeline with {valid_chunks_count} existing valid chunk(s)."
-            )
 
     def _monitor_completion(self) -> None:
         """
-        Monitors generation completion and triggers final assembly.
-
-        ISSUE-6 FIX:
-            Stop and discard any *existing* completion monitor timer before
-            creating a new one.  Previously, if ``_monitor_completion`` was called
-            more than once (e.g. after recovery), the previous QTimer was
-            overwritten without being stopped, creating an orphaned timer that
-            continued firing indefinitely and could call ``_finalize_generation``
-            on the wrong task.
+        Monitors generation completion, triggers retry sweeps for missing chunks if needed,
+        and starts final assembly only when 100% complete.
         """
-        # Stop and clean up any existing timer before replacing it
         if self._completion_monitor_timer is not None:
             self._completion_monitor_timer.stop()
             self._completion_monitor_timer = None
@@ -546,6 +537,35 @@ class ApplicationController(QObject):
 
             processed, total, _, _ = self._generation_service.get_progress_info()
             if total > 0 and processed >= total:
+                # Check if any chunks are missing or empty
+                missing_chunks = [
+                    self._chunks[i] for i, f in enumerate(self._audio_files)
+                    if f is None or not Path(f).exists() or Path(f).stat().st_size == 0
+                ]
+
+                if missing_chunks:
+                    if getattr(self, '_retry_sweep_count', 0) < 3:
+                        self._retry_sweep_count = getattr(self, '_retry_sweep_count', 0) + 1
+                        logging.warning(
+                            f"Initial pass complete, but {len(missing_chunks)} chunk(s) are missing. "
+                            f"Initiating retry sweep {self._retry_sweep_count}/3..."
+                        )
+                        task = self._get_current_task()
+                        if task and self._audio_dir:
+                            self._generation_service.retry_chunks(task, missing_chunks, self._audio_dir)
+                        return
+                    else:
+                        if self._completion_monitor_timer:
+                            self._completion_monitor_timer.stop()
+                        self._progress_timer.stop()
+                        error_msg = (
+                            f"Generation failed: {len(missing_chunks)} chunk(s) could not be synthesized "
+                            f"after 3 retry sweeps. Refusing to produce incomplete audio file."
+                        )
+                        logging.error(error_msg)
+                        self._handle_task_failure(error_msg)
+                        return
+
                 if self._completion_monitor_timer:
                     self._completion_monitor_timer.stop()
                 self._progress_timer.stop()
@@ -559,6 +579,20 @@ class ApplicationController(QObject):
         """Finalizes generation by assembling audio and cleaning up."""
         task = self._get_current_task()
         if not task:
+            return
+
+        missing_indices = [
+            i for i, f in enumerate(self._audio_files)
+            if f is None or not Path(f).exists() or Path(f).stat().st_size == 0
+        ]
+        if missing_indices:
+            missing_nums = [i + 1 for i in missing_indices[:10]]
+            error_msg = (
+                f"Generation failed: {len(missing_indices)} chunk(s) missing or empty "
+                f"(e.g., chunk numbers {missing_nums}). Aborting assembly to prevent outputting incomplete audio."
+            )
+            logging.error(error_msg)
+            self._handle_task_failure(error_msg)
             return
 
         logging.info("Finalizing generation. Starting final assembly...")
@@ -617,7 +651,10 @@ class ApplicationController(QObject):
         self.assemblyProgressUpdated.emit(percentage, remaining)
 
     def _on_assembly_error(self, error_msg: str) -> None:
-        logging.error(f"Assembly error: {error_msg}")
+        if "cancelled" in error_msg.lower() or "terminated" in error_msg.lower() or self._is_stopped:
+            logging.info(f"Assembly cancelled: {error_msg}")
+        else:
+            logging.error(f"Assembly error: {error_msg}")
 
     def pause_generation(self, task_id: Optional[str] = None) -> None:
         """Pauses the ongoing audio generation."""
@@ -645,7 +682,7 @@ class ApplicationController(QObject):
             updated_task = self._queue_service.toggle_task_pause(task_id)
             if updated_task:
                 logging.info(f"Task {task_id} pause status toggled to: {updated_task.status.value}")
-                self._save_state()
+                self._save_state(force=True)
                 if updated_task.status == TaskStatus.PENDING:
                     self._process_queue()
 
@@ -663,7 +700,7 @@ class ApplicationController(QObject):
             current_task.status = TaskStatus.PAUSED
             current_task.message = "Paused"
             
-        self._save_state()
+        self._save_state(force=True)
 
     def stop_generation(self) -> None:
         """Stops the audio generation for all tasks and cleans up."""
@@ -676,7 +713,7 @@ class ApplicationController(QObject):
         
         self._queue_service.clear_all_tasks()
         self._cleanup_temp_files()
-        self._save_state()
+        self._save_state(force=True)
         self._finalize_task()
 
     def cancel_task(self, task_id: str) -> None:
@@ -687,7 +724,7 @@ class ApplicationController(QObject):
         else:
             logging.info(f"Cancelling queued task: {task_id}")
             self._queue_service.remove_task(task_id)
-            self._save_state()
+            self._save_state(force=True)
             self._emit_global_progress()
 
     def _handle_task_failure(self, error_msg: str) -> None:
@@ -700,15 +737,21 @@ class ApplicationController(QObject):
         """Clean up current task and process next."""
         self._queue_service.finalize_current_task()
         self._cleanup_active_resources()
-        self._save_state()
+        self._save_state(force=True)
         self._process_queue()
         self._emit_global_progress()
 
-    def _save_state(self) -> None:
-        """Saves current queue state to persistence."""
+    def _save_state(self, force: bool = False) -> None:
+        """Saves current queue state to persistence with 3-second throttling unless forced."""
+        import time
+        now = time.time()
+        if not force and (now - self._last_save_time) < 3.0:
+            return
+
         try:
             tasks = self._queue_service.get_all_tasks()
-            self._persistence_service.save_state(tasks)
+            if self._persistence_service.save_state(tasks):
+                self._last_save_time = now
         except Exception as e:
             logging.error(f"Failed to auto-save state: {e}", exc_info=True)
 

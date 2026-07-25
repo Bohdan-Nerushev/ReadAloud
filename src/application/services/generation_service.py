@@ -87,6 +87,37 @@ class GenerationService(QObject):
 
         self._submit_chunks_to_threads()
 
+    def retry_chunks(
+            self,
+            task: GenerationTask,
+            chunks_to_retry: List[AudioChunk],
+            output_dir: str
+    ) -> None:
+        """Resubmits specific missing or failed chunks for a retry sweep."""
+        if not chunks_to_retry or self._is_stopped:
+            return
+
+        logging.info(f"Executing retry sweep for {len(chunks_to_retry)} chunk(s)...")
+        correlation_id = str(task.id)
+        max_workers = min(task.config.thread_count, len(chunks_to_retry))
+
+        if not self._thread_manager:
+            self._thread_manager = ThreadManager(thread_count=task.config.thread_count)
+            self._thread_manager.start()
+
+        for i in range(0, len(chunks_to_retry), self.BATCH_GEN_SIZE):
+            if self._is_stopped:
+                break
+            batch = chunks_to_retry[i:i + self.BATCH_GEN_SIZE]
+            self._thread_manager.submit_task(
+                self._generate_batch_safe,
+                batch,
+                task.config.language,
+                task.config.gender,
+                correlation_id,
+                max_workers
+            )
+
     def pause(self) -> bool:
         """Pauses or resumes generation. Returns True if now PAUSED, False if RUNNING."""
         if self._thread_manager is None:

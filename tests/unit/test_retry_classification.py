@@ -35,6 +35,8 @@ class TestRetryClassification(unittest.TestCase):
         self.assertTrue(_is_transient_error(asyncio.TimeoutError("Timed out")))
         self.assertTrue(_is_transient_error(ConnectionResetError("Connection reset")))
         self.assertTrue(_is_transient_error(TimeoutError("Operation timed out")))
+        self.assertTrue(_is_transient_error(Exception("No audio was received. Please verify that your parameters are correct.")))
+        self.assertTrue(_is_transient_error(RuntimeError("cannot schedule new futures after shutdown")))
 
     def test_http_status_codes(self):
         """Verify that 400, 401, 403 are fatal while 429, 503 are transient."""

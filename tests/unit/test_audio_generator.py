@@ -44,7 +44,9 @@ class TestAudioGenerator(unittest.TestCase):
         
         # Verify Communicate was called with correct text and voice
         expected_voice = self.generator.VOICE_MAPPING['en']['male']
-        self.mock_communicate.assert_called_with("Test text", expected_voice)
+        call_args = self.mock_communicate.call_args
+        self.assertEqual(call_args.args[0], "Test text")
+        self.assertEqual(call_args.args[1], expected_voice)
         
         # Verify save was called
         # The save call is inside the async loop, but since we used future.result() it should have finished

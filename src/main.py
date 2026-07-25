@@ -6,6 +6,8 @@ A text-to-speech application that converts text files to MP3 audio using Edge TT
 
 import sys
 import logging
+import re
+from typing import List
 from pathlib import Path
 
 # Add project root to sys.path to resolve 'src' package
@@ -56,7 +58,6 @@ class ReadAloudApplication:
         self._controller.queueStatusChanged.connect(self._on_queue_status_changed)
         
         # Connect queue list signals (per-task controls)
-        # Connect queue list signals (per-task controls)
         self._window.queue_list.taskDeleteRequested.connect(self._on_task_delete_requested)
         self._window.queue_list.taskPauseRequested.connect(self._controller.pause_generation)
 
@@ -65,29 +66,78 @@ class ReadAloudApplication:
     ) -> None:
         """Handles start button click."""
         try:
-            config = self._build_config_from_ui()
-            self._controller.add_task(config)
-
-            logging.info(f"Task '{config.project_name}' added to queue.")
+            configs = self._build_configs_from_ui()
+            for config in configs:
+                self._controller.add_task(config)
+                logging.info(f"Task '{config.project_name}' added to queue.")
+            self._window.file_selector.clear()
         except ConfigurationException as e:
             QMessageBox.warning(self._window, "Validation Error", str(e))
         except Exception as e:
             logging.error(f"Failed to start task: {e}", exc_info=True)
             QMessageBox.critical(self._window, "Error", f"Internal error: {str(e)}")
 
+    def _build_configs_from_ui(
+            self
+    ) -> List[ProjectConfig]:
+        """Reads UI inputs and creates a list of ProjectConfig objects."""
+        files = []
+        if hasattr(self._window.file_selector, "get_selected_files"):
+            raw_files = self._window.file_selector.get_selected_files()
+            if isinstance(raw_files, (list, tuple)):
+                files = list(raw_files)
+
+        if not files:
+            single = self._window.file_selector.get_selected_file()
+            if single and isinstance(single, str):
+                files = [single]
+
+        if not files:
+            raise ConfigurationException("Input file path cannot be empty")
+
+        language = self._window.language_selector.get_selected_language()
+        gender = self._window.gender_selector.get_selected_gender()
+        speed = self._window.speed_selector.get_selected_speed()
+        thread_count = self._window.thread_selector.get_thread_count()
+        output_dir = self._window.output_selector.get_selected_directory()
+
+        user_project_name = self._window.project_input.get_project_name().strip()
+        is_user_modified = self._window.project_input.is_user_modified()
+
+        configs = []
+        for file_path in files:
+            stem = Path(file_path).stem
+            if len(files) > 1:
+                proj_name = re.sub(r'[^\w\-. ]', '_', stem).strip()
+                if not proj_name:
+                    proj_name = "ReadAloud_Project"
+            else:
+                if is_user_modified and user_project_name:
+                    proj_name = user_project_name
+                else:
+                    proj_name = re.sub(r'[^\w\-. ]', '_', stem).strip()
+                    if not proj_name:
+                        proj_name = "ReadAloud_Project"
+
+            config = ProjectConfig(
+                project_name=proj_name,
+                input_file_path=file_path,
+                language=language,
+                gender=gender,
+                speed=speed,
+                thread_count=thread_count,
+                output_dir_path=output_dir
+            )
+            configs.append(config)
+
+        return configs
+
     def _build_config_from_ui(
             self
     ) -> ProjectConfig:
-        """Reads UI inputs and creates a ProjectConfig."""
-        return ProjectConfig(
-            project_name=self._window.project_input.get_project_name(),
-            input_file_path=self._window.file_selector.get_selected_file(),
-            language=self._window.language_selector.get_selected_language(),
-            gender=self._window.gender_selector.get_selected_gender(),
-            speed=self._window.speed_selector.get_selected_speed(),
-            thread_count=self._window.thread_selector.get_thread_count(),
-            output_dir_path=self._window.output_selector.get_selected_directory()
-        )
+        """Deprecated fallback method for single config creation."""
+        configs = self._build_configs_from_ui()
+        return configs[0]
 
 
     def _on_progress_updated(
