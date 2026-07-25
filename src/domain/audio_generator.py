@@ -535,13 +535,13 @@ class AudioGenerator:
                         except Exception:
                             pass
 
-                    if "429" in msg or "rate limit" in msg or "too many requests" in msg:
+                    if "429" in msg or "rate limit" in msg or "too many requests" in msg or "no audio" in msg:
                         self._rate_limit_reset_time = max(
                             self._rate_limit_reset_time,
                             asyncio.get_event_loop().time() + delay
                         )
                         logging.warning(
-                            f"Rate limit detected for chunk {chunk.chunk_number}. "
+                            f"Rate limit / API throttling detected for chunk {chunk.chunk_number}. "
                             f"Enforcing global worker backoff of {delay:.1f}s."
                         )
 
