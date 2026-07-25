@@ -308,14 +308,11 @@ class AudioGenerator:
         voice = self.VOICE_MAPPING[language][gender]
         output_path = Path(output_dir)
 
-        # ISSUE-7 FIX: Compute a safe upper-bound timeout for the whole batch.
-        # Each chunk has a 60 s per-attempt timeout × max_retries retries.
-        # We add a buffer of 30 s per chunk to account for overhead.
-        per_chunk_worst_case = 60 * max_retries + 30
-        batch_timeout = per_chunk_worst_case * len(chunks)
-        # Clamp to a sensible ceiling (30 min); very large batches are handled
-        # by the calling layer (GenerationService) which splits into sub-batches.
-        batch_timeout = max(120.0, min(batch_timeout, 1800.0))
+        import math
+        effective_workers = max(1, min(max_workers, len(chunks)))
+        batches_count = math.ceil(len(chunks) / effective_workers)
+        per_batch_worst_case = 60 * max_retries + 60
+        batch_timeout = max(120.0, min(batches_count * per_batch_worst_case + 60.0, 600.0))
 
         async def _run_batch() -> List[Optional[Tuple[str, float]]]:
             return await self._generate_batch_async(
