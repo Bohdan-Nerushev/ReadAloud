@@ -548,15 +548,19 @@ class ApplicationController(QObject):
                 ]
 
                 if missing_chunks:
-                    if getattr(self, '_retry_sweep_count', 0) < 3:
+                    if getattr(self, '_retry_sweep_count', 0) < 5:
                         self._retry_sweep_count = getattr(self, '_retry_sweep_count', 0) + 1
                         logging.warning(
                             f"Initial pass complete, but {len(missing_chunks)} chunk(s) are missing. "
-                            f"Initiating retry sweep {self._retry_sweep_count}/3..."
+                            f"Initiating retry sweep {self._retry_sweep_count}/5 after 3s cooling pause..."
                         )
                         task = self._get_current_task()
                         if task and self._audio_dir:
-                            self._generation_service.retry_chunks(task, missing_chunks, self._audio_dir)
+                            # 3-second cooling pause to allow network/rate-limit recovery
+                            QTimer.singleShot(
+                                3000,
+                                lambda: self._generation_service.retry_chunks(task, missing_chunks, self._audio_dir)
+                            )
                         return
                     else:
                         if self._completion_monitor_timer:
@@ -564,7 +568,7 @@ class ApplicationController(QObject):
                         self._progress_timer.stop()
                         error_msg = (
                             f"Generation failed: {len(missing_chunks)} chunk(s) could not be synthesized "
-                            f"after 3 retry sweeps. Refusing to produce incomplete audio file."
+                            f"after 5 retry sweeps. Refusing to produce incomplete audio file."
                         )
                         logging.error(error_msg)
                         self._handle_task_failure(error_msg)

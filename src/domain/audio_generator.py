@@ -173,6 +173,7 @@ class AudioGenerator:
         self._edge_tts = None
         self._network_manager = network_manager
         self._rate_limit_reset_time = 0.0
+        self._consecutive_rate_limits = 0
         self._init_lock = threading.Lock()
 
         self._loop_ready = threading.Event()
@@ -233,6 +234,24 @@ class AudioGenerator:
         loop.create_task(_init_connector())
         self._loop_ready.set()
         loop.run_forever()
+
+    async def _recycle_connector_async(self) -> None:
+        """Recycles the shared TCP connector on persistent network / rate limit errors."""
+        try:
+            if self._tcp_connector is not None:
+                old_conn = self._tcp_connector
+                self._tcp_connector = None
+                await old_conn.close()
+            self._tcp_connector = SafeTCPConnector(
+                limit=30,
+                ttl_dns_cache=60,
+                enable_cleanup_closed=True,
+                keepalive_timeout=30.0
+            )
+            logging.info("Recycled TCPConnector cleanly following API throttling/network glitch.")
+        except Exception as e:
+            logging.warning(f"Failed to recycle TCPConnector: {e}")
+            self._tcp_connector = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -480,6 +499,7 @@ class AudioGenerator:
                     None, self._get_file_duration_fast, str(audio_path)
                 )
 
+                self._consecutive_rate_limits = 0
                 logging.debug(
                     f"Chunk {chunk.chunk_number} generated successfully "
                     f"(attempt {attempt + 1}/{max_retries}, duration={duration:.2f}s)"
@@ -535,14 +555,19 @@ class AudioGenerator:
                         except Exception:
                             pass
 
-                    if "429" in msg or "rate limit" in msg or "too many requests" in msg or "no audio" in msg:
+                    if "429" in msg or "rate limit" in msg or "too many requests" in msg or "no audio" in msg or "disconnected" in msg:
+                        self._consecutive_rate_limits += 1
+                        adaptive_delay = min(90.0, delay + (self._consecutive_rate_limits * 2.0))
                         self._rate_limit_reset_time = max(
                             self._rate_limit_reset_time,
-                            asyncio.get_event_loop().time() + delay
+                            asyncio.get_event_loop().time() + adaptive_delay
                         )
+                        if self._consecutive_rate_limits >= 3:
+                            await self._recycle_connector_async()
+                            self._consecutive_rate_limits = 0
                         logging.warning(
                             f"Rate limit / API throttling detected for chunk {chunk.chunk_number}. "
-                            f"Enforcing global worker backoff of {delay:.1f}s."
+                            f"Enforcing global worker backoff of {adaptive_delay:.1f}s."
                         )
 
                     logging.warning(
