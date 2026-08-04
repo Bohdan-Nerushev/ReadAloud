@@ -18,6 +18,7 @@ class QueueItemWidget(QWidget):
     
     deleteRequested = pyqtSignal(str)
     pauseRequested = pyqtSignal(str)
+    retryRequested = pyqtSignal(str)
     
     def __init__(
             self,
@@ -211,7 +212,7 @@ class QueueItemWidget(QWidget):
         self.pause_button = QPushButton("Pause")
         self.pause_button.setFixedSize(70, 24)
         self.pause_button.setStyleSheet(Styles.BUTTON_PAUSE + "QPushButton { padding: 0px; font-size: 11px; }")
-        self.pause_button.clicked.connect(lambda: self.pauseRequested.emit(str(self.task_id)))
+        self.pause_button.clicked.connect(self._on_action_button_clicked)
         buttons_group.addWidget(self.pause_button)
         
         self.delete_button = QPushButton("X")
@@ -234,6 +235,13 @@ class QueueItemWidget(QWidget):
         """)
         
         self._update_button_states(task)
+
+    def _on_action_button_clicked(self) -> None:
+        """Handles action button click (Pause / Resume / Retry)."""
+        if getattr(self, '_current_status', None) in (TaskStatus.FAILED, TaskStatus.STOPPED) or self.pause_button.text() == "Retry":
+            self.retryRequested.emit(str(self.task_id))
+        else:
+            self.pauseRequested.emit(str(self.task_id))
         
     def update_task(
             self,
@@ -251,6 +259,7 @@ class QueueItemWidget(QWidget):
 
     def _update_button_states(self, task: GenerationTask) -> None:
         """Enables/disables buttons based on task status."""
+        self._current_status = task.status
         self.delete_button.setEnabled(True)
         self.delete_button.show()
         

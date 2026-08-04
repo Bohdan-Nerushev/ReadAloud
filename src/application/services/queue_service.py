@@ -92,6 +92,28 @@ class QueueService(QObject):
                 return task
         return None
 
+    def retry_task(self, task_id: str) -> Optional[GenerationTask]:
+        """
+        Resets a failed or stopped task to PENDING status and places it at the front of the queue.
+        """
+        if self._current_task and str(self._current_task.id) == task_id:
+            task = self._current_task
+            self._current_task = None
+            task.update_status(TaskStatus.PENDING, "Pending Retry")
+            self._task_queue.appendleft(task)
+            self._notify_task_updated(task)
+            return task
+
+        for i, task in enumerate(self._task_queue):
+            if str(task.id) == task_id:
+                task.update_status(TaskStatus.PENDING, "Pending Retry")
+                del self._task_queue[i]
+                self._task_queue.appendleft(task)
+                self._notify_task_updated(task)
+                return task
+
+        return None
+
     def finalize_current_task(
             self
     ) -> None:

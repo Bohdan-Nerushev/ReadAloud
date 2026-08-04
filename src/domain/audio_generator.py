@@ -242,7 +242,10 @@ class AudioGenerator:
             if self._tcp_connector is not None:
                 old_conn = self._tcp_connector
                 self._tcp_connector = None
-                await old_conn.close()
+                if hasattr(old_conn, "real_close"):
+                    await old_conn.real_close()
+                else:
+                    await old_conn.close()
             self._tcp_connector = SafeTCPConnector(
                 limit=30,
                 ttl_dns_cache=60,
@@ -486,9 +489,7 @@ class AudioGenerator:
                     # Recheck global rate-limit pause after acquiring the semaphore
                     now = asyncio.get_event_loop().time()
                     if self._rate_limit_reset_time > now:
-                        raise TransientGenerationException(
-                            "Global rate limit active after acquiring semaphore"
-                        )
+                        await asyncio.sleep((self._rate_limit_reset_time - now) + random.uniform(0.5, 1.5))
 
                     # Introduce a small randomized request spacing delay (0.1 to 0.3s)
                     # to prevent hitting the API in simultaneous bursts

@@ -60,6 +60,7 @@ class ReadAloudApplication:
         # Connect queue list signals (per-task controls)
         self._window.queue_list.taskDeleteRequested.connect(self._on_task_delete_requested)
         self._window.queue_list.taskPauseRequested.connect(self._controller.pause_generation)
+        self._window.queue_list.taskRetryRequested.connect(self._controller.retry_generation)
 
     def _on_start_clicked(
             self

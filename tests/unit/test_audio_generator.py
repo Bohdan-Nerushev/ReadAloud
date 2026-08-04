@@ -132,7 +132,7 @@ class TestAudioGenerator(unittest.TestCase):
     def test_global_rate_limit_recheck_inside_semaphore(self):
         """
         Verifies that if a global rate limit is set while a worker is waiting for the semaphore,
-        it is rechecked inside the semaphore and raises TransientGenerationException.
+        it waits out the rate-limit delay inside the semaphore and completes synthesis.
         """
         # Set max_concurrency to 1 so chunk 2 is forced to wait on the semaphore while chunk 1 is running
         generator = AudioGenerator(max_concurrency=1)
@@ -142,9 +142,9 @@ class TestAudioGenerator(unittest.TestCase):
 
             calls = []
             async def mock_save(path):
-                # When chunk 1 runs, set global rate limit reset time to the future
+                # When chunk 1 runs, set global rate limit reset time slightly in the future
                 if "1.mp3" in path:
-                    generator._rate_limit_reset_time = asyncio.get_event_loop().time() + 10.0
+                    generator._rate_limit_reset_time = asyncio.get_event_loop().time() + 0.1
                     calls.append("chunk1")
                 else:
                     calls.append("chunk2")
@@ -158,9 +158,9 @@ class TestAudioGenerator(unittest.TestCase):
             
             self.assertEqual(len(results), 2)
             self.assertIsNotNone(results[0])
-            self.assertIsNone(results[1])
+            self.assertIsNotNone(results[1])
             self.assertIn("chunk1", calls)
-            self.assertNotIn("chunk2", calls)
+            self.assertIn("chunk2", calls)
         finally:
             generator.close()
 

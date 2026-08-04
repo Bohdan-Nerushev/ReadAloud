@@ -18,6 +18,7 @@ class QueueListWidget(QWidget):
     
     taskDeleteRequested = pyqtSignal(str) # task_id
     taskPauseRequested = pyqtSignal(str) # task_id
+    taskRetryRequested = pyqtSignal(str) # task_id
     
     def __init__(
             self,
@@ -69,6 +70,7 @@ class QueueListWidget(QWidget):
         # Connect signals from queue item
         widget.deleteRequested.connect(self.taskDeleteRequested.emit)
         widget.pauseRequested.connect(self.taskPauseRequested.emit)
+        widget.retryRequested.connect(self.taskRetryRequested.emit)
         
         hint = widget.sizeHint()
         if not isinstance(hint, QSize):

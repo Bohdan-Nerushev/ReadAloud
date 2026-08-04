@@ -695,6 +695,25 @@ class ApplicationController(QObject):
                 if updated_task.status == TaskStatus.PENDING:
                     self._process_queue()
 
+    def retry_generation(self, task_id: Optional[str] = None) -> None:
+        """Retries audio generation for a failed or stopped task."""
+        current_task = self._get_current_task()
+        if task_id is None and current_task:
+            task_id = str(current_task.id)
+
+        if not task_id:
+            return
+
+        logging.info(f"Initiating retry for task {task_id}...")
+        if current_task and str(current_task.id) == task_id:
+            self._generation_service.stop(wait=True)
+
+        updated_task = self._queue_service.retry_task(task_id)
+        if updated_task:
+            logging.info(f"Task {task_id} set to PENDING for retry.")
+            self._save_state(force=True)
+            self._process_queue()
+
     def shutdown(self) -> None:
         """Gracefully stops ongoing processing and saves queue state for next run."""
         logging.info("Shutting down ApplicationController...")
