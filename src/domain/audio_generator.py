@@ -168,10 +168,11 @@ class AudioGenerator:
     # Sentinel used to signal async workers to stop
     _STOP_SENTINEL = object()
 
-    def __init__(self, network_manager: Optional[Any] = None) -> None:
+    def __init__(self, network_manager: Optional[Any] = None, max_concurrency: int = 3) -> None:
         """Initialize the AudioGenerator."""
         self._edge_tts = None
         self._network_manager = network_manager
+        self._max_concurrency = max_concurrency
         self._rate_limit_reset_time = 0.0
         self._consecutive_rate_limits = 0
         self._init_lock = threading.Lock()
@@ -215,7 +216,7 @@ class AudioGenerator:
     def _start_background_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Runs the asyncio event loop in a dedicated thread."""
         asyncio.set_event_loop(loop)
-        self._semaphore = asyncio.Semaphore(10)
+        self._semaphore = asyncio.Semaphore(self._max_concurrency)
         self._network_lock = asyncio.Lock()
 
         async def _init_connector() -> None:
@@ -468,7 +469,9 @@ class AudioGenerator:
                 # Check global rate-limit pause
                 now = asyncio.get_event_loop().time()
                 if self._rate_limit_reset_time > now:
-                    await asyncio.sleep(self._rate_limit_reset_time - now)
+                    # Wait until the global backoff expires, plus some randomized jitter (0.5 to 1.5s)
+                    # to break worker synchronization and avoid a thundering herd
+                    await asyncio.sleep((self._rate_limit_reset_time - now) + random.uniform(0.5, 1.5))
 
                 audio_path = output_path / f"{chunk.chunk_number}.mp3"
                 tmp_audio_path = output_path / f"{chunk.chunk_number}.mp3.tmp"
@@ -480,6 +483,16 @@ class AudioGenerator:
                     communicate = self.edge_tts.Communicate(chunk.text_content, voice)
 
                 async with self._semaphore:
+                    # Recheck global rate-limit pause after acquiring the semaphore
+                    now = asyncio.get_event_loop().time()
+                    if self._rate_limit_reset_time > now:
+                        raise TransientGenerationException(
+                            "Global rate limit active after acquiring semaphore"
+                        )
+
+                    # Introduce a small randomized request spacing delay (0.1 to 0.3s)
+                    # to prevent hitting the API in simultaneous bursts
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
                     try:
                         await asyncio.wait_for(
                             communicate.save(str(tmp_audio_path)), timeout=60

@@ -119,6 +119,51 @@ class TestAudioGenerator(unittest.TestCase):
         # Transient error — should have retried max_retries (2) times
         self.assertEqual(self.mock_instance.save.call_count, 2)
 
+    def test_max_concurrency_configuration(self):
+        """test_max_concurrency_configuration: Verifies that max_concurrency is set correctly and defaults to 3."""
+        self.assertEqual(self.generator._max_concurrency, 3)
+        
+        custom_generator = AudioGenerator(max_concurrency=5)
+        try:
+            self.assertEqual(custom_generator._max_concurrency, 5)
+        finally:
+            custom_generator.close()
+
+    def test_global_rate_limit_recheck_inside_semaphore(self):
+        """
+        Verifies that if a global rate limit is set while a worker is waiting for the semaphore,
+        it is rechecked inside the semaphore and raises TransientGenerationException.
+        """
+        # Set max_concurrency to 1 so chunk 2 is forced to wait on the semaphore while chunk 1 is running
+        generator = AudioGenerator(max_concurrency=1)
+        try:
+            chunk1 = AudioChunk(chunk_number=1, text_content="first")
+            chunk2 = AudioChunk(chunk_number=2, text_content="second")
+
+            calls = []
+            async def mock_save(path):
+                # When chunk 1 runs, set global rate limit reset time to the future
+                if "1.mp3" in path:
+                    generator._rate_limit_reset_time = asyncio.get_event_loop().time() + 10.0
+                    calls.append("chunk1")
+                else:
+                    calls.append("chunk2")
+
+            self.mock_instance.save.side_effect = mock_save
+
+            results = generator.generate_audio_batch(
+                [chunk1, chunk2], "en", "male", "/tmp",
+                max_workers=2, max_retries=1, backoff=0.01
+            )
+            
+            self.assertEqual(len(results), 2)
+            self.assertIsNotNone(results[0])
+            self.assertIsNone(results[1])
+            self.assertIn("chunk1", calls)
+            self.assertNotIn("chunk2", calls)
+        finally:
+            generator.close()
+
 
 if __name__ == '__main__':
     unittest.main()
