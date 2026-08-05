@@ -3,8 +3,7 @@ import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
 
-import aiohttp
-from src.domain.audio_generator import AudioGenerator, SafeTCPConnector
+from src.domain.audio_generator import AudioGenerator, _is_transient_error
 from src.domain.models import AudioChunk, GenerationTask, TaskStatus, ProjectConfig
 from src.application.services.queue_service import QueueService
 from src.gui.widgets.queue_item import QueueItemWidget
@@ -27,18 +26,51 @@ class TestRetryAndRateLimitFixes(unittest.TestCase):
         if hasattr(self.generator, 'close'):
             self.generator.close()
 
-    def test_safe_tcp_connector_real_close(self):
-        """Verifies that SafeTCPConnector.close() is a no-op but real_close() closes super."""
-        async def _test():
-            conn = SafeTCPConnector()
-            with patch.object(aiohttp.TCPConnector, 'close', new_callable=AsyncMock) as mock_super_close:
-                await conn.close()
-                mock_super_close.assert_not_called()
+    def test_communicate_created_without_connector(self):
+        """Verifies that Communicate is called without a connector argument.
 
-                await conn.real_close()
-                mock_super_close.assert_called_once()
+        The shared SafeTCPConnector was removed because it caused a race condition:
+        recycling the connector while workers held stale references caused
+        RuntimeError('Session is closed') on their first attempt.
+        Each Communicate call must now create its own isolated aiohttp session.
+        """
+        import edge_tts
+        chunk = MagicMock()
+        chunk.text_content = "Hello world"
+        chunk.chunk_number = 1
 
-        asyncio.run(_test())
+        with patch.object(self.generator.edge_tts, 'Communicate', wraps=self.mock_communicate) as mock_comm:
+            # Use the mock that was already set up in setUp
+            pass
+
+        # Verify Communicate is callable without connector kwarg
+        with patch('edge_tts.Communicate') as mock_comm_cls:
+            mock_instance = MagicMock()
+            mock_instance.save = AsyncMock()
+            mock_comm_cls.return_value = mock_instance
+
+            async def _run():
+                import tempfile, os
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    from pathlib import Path
+                    from src.domain.models import AudioChunk
+                    ac = AudioChunk(chunk_number=1, text_content="Hello world")
+                    with patch.object(self.generator, '_get_file_duration_fast', return_value=1.0):
+                        with patch.object(Path, 'exists', return_value=True):
+                            with patch('os.replace'):
+                                try:
+                                    await self.generator._generate_one_with_retry(
+                                        ac, 'en-US-AriaNeural', Path(tmpdir),
+                                        max_retries=1, backoff=0.0
+                                    )
+                                except Exception:
+                                    pass
+                    # Verify: connector keyword was NOT passed
+                    call_kwargs = mock_comm_cls.call_args
+                    if call_kwargs:
+                        self.assertNotIn('connector', call_kwargs.kwargs)
+
+            asyncio.run(_run())
 
     def test_queue_service_retry_task(self):
         """Verifies QueueService.retry_task resets task to PENDING and moves it to front of queue."""

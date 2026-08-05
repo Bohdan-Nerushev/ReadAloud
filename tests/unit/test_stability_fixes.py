@@ -1,10 +1,9 @@
 import unittest
 import asyncio
-import aiohttp
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from src.domain.models import TaskStatus, AudioChunk, ProjectConfig, GenerationTask
-from src.domain.audio_generator import SafeTCPConnector
+from src.domain.audio_generator import _is_transient_error
 from src.domain.audio_assembler import AudioAssembler
 from src.infrastructure.progress_tracker import ProgressTracker
 from src.application.services.generation_service import GenerationService
@@ -13,24 +12,22 @@ from src.application.app_controller import ApplicationController
 
 class TestStabilityFixes(unittest.TestCase):
 
-    def test_safe_tcp_connector_prevents_premature_closure(self):
-        """Verifies that SafeTCPConnector remains open after a ClientSession closes."""
-        async def run_test():
-            connector = SafeTCPConnector()
-            self.assertFalse(connector.closed)
+    def test_session_is_closed_classified_as_transient(self):
+        """Verifies RuntimeError('Session is closed') is treated as a transient/retriable error.
 
-            # Create and close a session with the connector
-            async with aiohttp.ClientSession(connector=connector) as session:
-                pass
+        Previously this was incorrectly classified as fatal (non-retriable), causing chunks
+        to fail permanently on the first attempt when the shared connector was recycled.
+        """
+        exc = RuntimeError("Session is closed")
+        self.assertTrue(
+            _is_transient_error(exc),
+            "RuntimeError('Session is closed') must be transient so it gets retried"
+        )
 
-            # Connector should still be open
-            self.assertFalse(connector.closed)
-
-            # Connector should only close when real_close is explicitly called
-            await connector.real_close()
-            self.assertTrue(connector.closed)
-
-        asyncio.run(run_test())
+    def test_connector_is_closed_classified_as_transient(self):
+        """Verifies RuntimeError('Connector is closed') is treated as transient."""
+        exc = RuntimeError("Connector is closed")
+        self.assertTrue(_is_transient_error(exc))
 
     def test_controller_shutdown_and_stop_waits_for_threads(self):
         """Verifies that shutdown and stop_generation call GenerationService.stop with wait=True."""

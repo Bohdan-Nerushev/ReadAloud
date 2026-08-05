@@ -6,7 +6,9 @@ This module handles conversion of text chunks to audio files.
 
 import asyncio
 import logging
+import os
 import random
+import socket
 import threading
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
@@ -15,29 +17,11 @@ from src.domain.exceptions import TransientGenerationException, FatalGenerationE
 from src.domain.models import AudioChunk
 
 
-import aiohttp
-
-
-class SafeTCPConnector(aiohttp.TCPConnector):
-    """
-    TCPConnector wrapper that prevents aiohttp.ClientSession from closing the 
-    underlying connection pool. It only closes when real_close is explicitly called.
-    """
-    async def close(self) -> None:
-        pass
-
-    async def real_close(self) -> None:
-        await super().close()
-
-
-import os
-import socket
-
 # ---------------------------------------------------------------------------
 # Error classification helpers
 # ---------------------------------------------------------------------------
 
-# Exception type names or substrings that indicate a transient (retriable) problem.
+# Exception types that indicate a fatal (non-retriable) problem.
 _FATAL_EXCEPTIONS = (
     ValueError, TypeError, AttributeError, KeyError, IndexError,
     FileNotFoundError, PermissionError, FatalGenerationException
@@ -79,6 +63,13 @@ _TRANSIENT_ERROR_SUBSTRINGS = (
     "no audio",
     "cannot schedule",
     "shutdown",
+    # RuntimeError("Session is closed") — aiohttp raises this when the connector
+    # was recycled while a Communicate object held a stale reference to it.
+    # Treated as transient so a fresh session is attempted on the next retry.
+    "session is closed",
+    "session closed",
+    # Generic "closed" guard for future aiohttp/websocket variants
+    "connector is closed",
 )
 
 
@@ -87,9 +78,9 @@ def _is_transient_error(exc: BaseException) -> bool:
     Heuristically classify an exception as transient (retriable) or fatal.
 
     Returns True if the error is likely temporary and a retry may succeed.
-    Returns False for errors that will not improve with retrying (e.g., bad input).
+    Returns False for errors that will not improve with retrying.
     """
-    # Always fatal — programmer / config / filesystem input bugs
+    # Always fatal — programmer / config / filesystem bugs
     if isinstance(exc, _FATAL_EXCEPTIONS):
         return False
 
@@ -131,6 +122,17 @@ class AudioGenerator:
         `generate_audio_batch` may be called from multiple threads concurrently;
         internally it schedules coroutines on a single shared asyncio event loop
         running in a dedicated daemon thread.
+
+    Design note — no shared connector:
+        A shared ``aiohttp.TCPConnector`` was previously used across workers.
+        This caused a fatal race condition: when the connector was recycled
+        (``real_close()`` called), workers that still held a reference to the
+        old connector raised ``RuntimeError: Session is closed`` on the very
+        first attempt, which was incorrectly classified as non-retriable.
+        Each ``edge_tts.Communicate`` call now creates its own ``aiohttp``
+        session internally, which is closed cleanly after each synthesis.
+        The per-chunk TCP overhead is negligible compared to the WebSocket
+        streaming time (~60-70 s per chunk).
     """
 
     # Mapping of language codes and genders to Edge TTS voices
@@ -180,7 +182,6 @@ class AudioGenerator:
         self._loop_ready = threading.Event()
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._network_lock: Optional[asyncio.Lock] = None
-        self._tcp_connector: Optional[Any] = None
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -218,44 +219,8 @@ class AudioGenerator:
         asyncio.set_event_loop(loop)
         self._semaphore = asyncio.Semaphore(self._max_concurrency)
         self._network_lock = asyncio.Lock()
-
-        async def _init_connector() -> None:
-            try:
-                self._tcp_connector = SafeTCPConnector(
-                    limit=30,
-                    ttl_dns_cache=300,
-                    enable_cleanup_closed=True,
-                    keepalive_timeout=60.0
-                )
-                logging.debug("Shared TCPConnector initialized successfully.")
-            except Exception as e:
-                logging.warning(f"Could not initialize shared TCPConnector: {e}")
-                self._tcp_connector = None
-
-        loop.create_task(_init_connector())
         self._loop_ready.set()
         loop.run_forever()
-
-    async def _recycle_connector_async(self) -> None:
-        """Recycles the shared TCP connector on persistent network / rate limit errors."""
-        try:
-            if self._tcp_connector is not None:
-                old_conn = self._tcp_connector
-                self._tcp_connector = None
-                if hasattr(old_conn, "real_close"):
-                    await old_conn.real_close()
-                else:
-                    await old_conn.close()
-            self._tcp_connector = SafeTCPConnector(
-                limit=30,
-                ttl_dns_cache=60,
-                enable_cleanup_closed=True,
-                keepalive_timeout=30.0
-            )
-            logging.info("Recycled TCPConnector cleanly following API throttling/network glitch.")
-        except Exception as e:
-            logging.warning(f"Failed to recycle TCPConnector: {e}")
-            self._tcp_connector = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -331,12 +296,6 @@ class AudioGenerator:
         voice = self.VOICE_MAPPING[language][gender]
         output_path = Path(output_dir)
 
-        import math
-        effective_workers = max(1, min(max_workers, len(chunks)))
-        batches_count = math.ceil(len(chunks) / effective_workers)
-        per_batch_worst_case = 60 * max_retries + 60
-        batch_timeout = max(300.0, min(batches_count * per_batch_worst_case + 300.0, 1200.0))
-
         async def _run_batch() -> List[Optional[Tuple[str, float]]]:
             return await self._generate_batch_async(
                 chunks, voice, output_path,
@@ -348,7 +307,6 @@ class AudioGenerator:
 
         try:
             future = asyncio.run_coroutine_threadsafe(_run_batch(), self._loop)
-            # Chunks are self-limiting (60s timeout per call, max 10 retries). Allow batch to complete naturally.
             return future.result(timeout=None)
         except TimeoutError as e:
             future.cancel()
@@ -461,6 +419,12 @@ class AudioGenerator:
         ISSUE-11 FIX:
             Fatal errors (ValueError, FatalGenerationException, etc.) abort
             immediately without consuming remaining retry attempts.
+
+        SESSION-CLOSED FIX:
+            Removed shared SafeTCPConnector. Each Communicate call creates its
+            own aiohttp.ClientSession internally. This eliminates the race where
+            a recycled (closed) connector was still held by in-flight workers,
+            causing RuntimeError("Session is closed") on their first attempt.
         """
         if not chunk.text_content or not chunk.text_content.strip():
             raise FatalGenerationException(f"Chunk {chunk.chunk_number} text content is empty")
@@ -472,18 +436,18 @@ class AudioGenerator:
                 # Check global rate-limit pause
                 now = asyncio.get_event_loop().time()
                 if self._rate_limit_reset_time > now:
-                    # Wait until the global backoff expires, plus some randomized jitter (0.5 to 1.5s)
+                    # Wait until the global backoff expires, plus randomized jitter
                     # to break worker synchronization and avoid a thundering herd
                     await asyncio.sleep((self._rate_limit_reset_time - now) + random.uniform(0.5, 1.5))
 
                 audio_path = output_path / f"{chunk.chunk_number}.mp3"
                 tmp_audio_path = output_path / f"{chunk.chunk_number}.mp3.tmp"
-                if self._tcp_connector is not None:
-                    communicate = self.edge_tts.Communicate(
-                        chunk.text_content, voice, connector=self._tcp_connector
-                    )
-                else:
-                    communicate = self.edge_tts.Communicate(chunk.text_content, voice)
+
+                # Create a fresh Communicate object for every attempt.
+                # No shared connector is passed — edge_tts creates its own
+                # aiohttp.ClientSession that is isolated to this synthesis call
+                # and closed cleanly after streaming completes.
+                communicate = self.edge_tts.Communicate(chunk.text_content, voice)
 
                 async with self._semaphore:
                     # Recheck global rate-limit pause after acquiring the semaphore
@@ -491,7 +455,7 @@ class AudioGenerator:
                     if self._rate_limit_reset_time > now:
                         await asyncio.sleep((self._rate_limit_reset_time - now) + random.uniform(0.5, 1.5))
 
-                    # Introduce a small randomized request spacing delay (0.1 to 0.3s)
+                    # Small randomized request spacing delay (0.1 to 0.3s)
                     # to prevent hitting the API in simultaneous bursts
                     await asyncio.sleep(random.uniform(0.1, 0.3))
                     try:
@@ -586,9 +550,6 @@ class AudioGenerator:
                             self._rate_limit_reset_time,
                             asyncio.get_event_loop().time() + adaptive_delay
                         )
-                        if self._consecutive_rate_limits >= 3:
-                            await self._recycle_connector_async()
-                            self._consecutive_rate_limits = 0
                         logging.warning(
                             f"Rate limit / API throttling detected for chunk {chunk.chunk_number}. "
                             f"Enforcing global worker backoff of {adaptive_delay:.1f}s."
@@ -622,15 +583,7 @@ class AudioGenerator:
             return 0.0
 
     def close(self) -> None:
-        """Stops and closes the background asyncio event loop and connector."""
-        if hasattr(self, '_tcp_connector') and self._tcp_connector:
-            try:
-                if self._loop and self._loop.is_running():
-                    fut = asyncio.run_coroutine_threadsafe(self._tcp_connector.real_close(), self._loop)
-                    fut.result(timeout=2.0)
-            except Exception as e:
-                logging.warning(f"Error closing SafeTCPConnector: {e}")
-
+        """Stops and closes the background asyncio event loop."""
         if hasattr(self, '_loop') and self._loop:
             if self._loop.is_running():
                 self._loop.call_soon_threadsafe(self._loop.stop)
@@ -638,5 +591,5 @@ class AudioGenerator:
                 self._loop_thread.join(timeout=2.0)
             try:
                 self._loop.close()
-            except Exception as e:
-                logging.warning(f"Error closing AudioGenerator event loop: {e}")
+            except Exception:
+                pass
