@@ -440,6 +440,7 @@ class AudioGenerator:
                     # to break worker synchronization and avoid a thundering herd
                     await asyncio.sleep((self._rate_limit_reset_time - now) + random.uniform(0.5, 1.5))
 
+                output_path.mkdir(parents=True, exist_ok=True)
                 audio_path = output_path / f"{chunk.chunk_number}.mp3"
                 tmp_audio_path = output_path / f"{chunk.chunk_number}.mp3.tmp"
 

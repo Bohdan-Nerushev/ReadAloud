@@ -8,6 +8,7 @@ is never partially written even if the process is killed mid-operation.
 import json
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,7 @@ class PersistenceService:
 
     def __init__(self, file_path: str) -> None:
         self._file_path = Path(file_path)
-        self._tmp_path = self._file_path.with_suffix(".tmp")
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -38,42 +39,31 @@ class PersistenceService:
 
     def save_state(self, tasks: List[GenerationTask]) -> bool:
         """
-        Atomically saves the current task list to disk.
-
-        ISSUE-8 FIX:
-            Previously the state file was opened directly for writing, leaving
-            a corrupt/empty file if the process was killed mid-write.  Now we:
-            1. Write the full JSON to a sibling ``.tmp`` file.
-            2. Call ``os.replace`` to atomically swap it into place.
-            This means the persisted file is always either the previous complete
-            snapshot or the new complete snapshot — never something in between.
-
-        Returns:
-            True on success, False if an error occurred (already logged).
+        Atomically saves the current task list to disk in a thread-safe manner.
         """
-        try:
-            self._file_path.parent.mkdir(parents=True, exist_ok=True)
-            serialized = [self._task_to_dict(task) for task in tasks]
-            payload = json.dumps(serialized, indent=4, ensure_ascii=False)
-
-            # Write to temp file first
-            self._tmp_path.write_text(payload, encoding="utf-8")
-
-            # Atomic replace — on POSIX this is guaranteed atomic
-            os.replace(str(self._tmp_path), str(self._file_path))
-
-            logging.debug(f"State saved atomically ({len(tasks)} task(s)).")
-            return True
-
-        except Exception as e:
-            logging.error(f"Failed to save state: {e}", exc_info=True)
-            # Try to remove the temp file so stale data does not accumulate
+        with self._lock:
+            tmp_path: Optional[Path] = None
             try:
-                if self._tmp_path.exists():
-                    self._tmp_path.unlink()
-            except Exception:
-                pass
-            return False
+                self._file_path.parent.mkdir(parents=True, exist_ok=True)
+                serialized = [self._task_to_dict(task) for task in tasks]
+                payload = json.dumps(serialized, indent=4, ensure_ascii=False)
+
+                tmp_path = self._file_path.with_name(f"{self._file_path.name}.{uuid.uuid4().hex}.tmp")
+                tmp_path.write_text(payload, encoding="utf-8")
+
+                os.replace(str(tmp_path), str(self._file_path))
+
+                logging.debug(f"State saved atomically ({len(tasks)} task(s)).")
+                return True
+
+            except Exception as e:
+                logging.error(f"Failed to save state: {e}", exc_info=True)
+                if tmp_path and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                return False
 
     def load_state(self) -> List[GenerationTask]:
         """
@@ -104,20 +94,27 @@ class PersistenceService:
         """
         Atomically saves task manifest metadata (manifest.json) into the specified directory.
         """
-        try:
-            target_dir = Path(directory)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            manifest_path = target_dir / "manifest.json"
-            tmp_path = target_dir / "manifest.json.tmp"
+        with self._lock:
+            tmp_path: Optional[Path] = None
+            try:
+                target_dir = Path(directory)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                manifest_path = target_dir / "manifest.json"
+                tmp_path = target_dir / f"manifest.json.{uuid.uuid4().hex}.tmp"
 
-            payload = json.dumps(manifest_data, indent=4, ensure_ascii=False)
-            tmp_path.write_text(payload, encoding="utf-8")
-            os.replace(str(tmp_path), str(manifest_path))
-            logging.debug(f"Manifest saved atomically in {directory}.")
-            return True
-        except Exception as e:
-            logging.error(f"Failed to save manifest in {directory}: {e}", exc_info=True)
-            return False
+                payload = json.dumps(manifest_data, indent=4, ensure_ascii=False)
+                tmp_path.write_text(payload, encoding="utf-8")
+                os.replace(str(tmp_path), str(manifest_path))
+                logging.debug(f"Manifest saved atomically in {directory}.")
+                return True
+            except Exception as e:
+                logging.error(f"Failed to save manifest in {directory}: {e}", exc_info=True)
+                if tmp_path and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                return False
 
     def load_manifest(self, directory: str) -> Optional[Dict[str, Any]]:
         """
@@ -155,7 +152,7 @@ class PersistenceService:
 
     def _handle_corrupted(self) -> None:
         """Removes a corrupt state file to prevent repeated failures on startup."""
-        for path in (self._file_path, self._tmp_path):
+        for path in (self._file_path, self._file_path.with_suffix(".tmp")):
             try:
                 if path.exists():
                     path.unlink()

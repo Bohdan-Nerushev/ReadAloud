@@ -306,6 +306,7 @@ class ApplicationController(QObject):
         self._text_dir = None
         self._audio_dir = None
         self._retry_sweep_count = 0
+        self._retry_in_progress = False
 
         self.progressUpdated.emit(0, 0, "Preparing...", 0.0)
 
@@ -539,6 +540,9 @@ class ApplicationController(QObject):
                     self._completion_monitor_timer.stop()
                 return
 
+            if getattr(self, '_retry_in_progress', False):
+                return
+
             processed, total, _, _ = self._generation_service.get_progress_info()
             if total > 0 and processed >= total:
                 # Check if any chunks are missing or empty
@@ -549,6 +553,7 @@ class ApplicationController(QObject):
 
                 if missing_chunks:
                     if getattr(self, '_retry_sweep_count', 0) < 5:
+                        self._retry_in_progress = True
                         self._retry_sweep_count = getattr(self, '_retry_sweep_count', 0) + 1
                         logging.warning(
                             f"Initial pass complete, but {len(missing_chunks)} chunk(s) are missing. "
@@ -556,11 +561,16 @@ class ApplicationController(QObject):
                         )
                         task = self._get_current_task()
                         if task and self._audio_dir:
-                            # 3-second cooling pause to allow network/rate-limit recovery
-                            QTimer.singleShot(
-                                3000,
-                                lambda: self._generation_service.retry_chunks(task, missing_chunks, self._audio_dir)
-                            )
+                            def execute_sweep():
+                                try:
+                                    if not self._is_stopped:
+                                        self._generation_service.retry_chunks(task, missing_chunks, self._audio_dir)
+                                finally:
+                                    self._retry_in_progress = False
+
+                            QTimer.singleShot(3000, execute_sweep)
+                        else:
+                            self._retry_in_progress = False
                         return
                     else:
                         if self._completion_monitor_timer:

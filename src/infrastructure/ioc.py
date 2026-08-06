@@ -72,7 +72,8 @@ class Container:
     def audio_generator(self) -> AudioGenerator:
         if not self._audio_generator:
             self._audio_generator = AudioGenerator(
-                network_manager=self.network_manager
+                network_manager=self.network_manager,
+                max_concurrency=5
             )
         return self._audio_generator
 

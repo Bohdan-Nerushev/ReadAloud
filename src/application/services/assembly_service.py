@@ -202,7 +202,12 @@ class AssemblyService(QObject):
 
         # Verify all chunk files in this batch are valid
         if any(f is None or not Path(f).exists() or Path(f).stat().st_size == 0 for f in files):
-            logging.error(f"Batch {batch_index} contains missing or empty chunk file(s) — aborting batch assembly.")
+            logging.warning(
+                f"Batch {batch_index} contains missing or empty chunk file(s) — "
+                "deferring batch assembly until all chunks are synthesized."
+            )
+            with self._state_lock:
+                self._batch_submitted.discard(batch_index)
             return
 
         valid_files = list(files)

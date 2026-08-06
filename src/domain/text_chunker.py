@@ -86,7 +86,7 @@ class TextChunker:
             
             chunk_text = text[current_position:end_position]
             
-            if chunk_text:
+            if chunk_text and chunk_text.strip():
                 chunk = AudioChunk(
                     chunk_number=chunk_number,
                     text_content=chunk_text
