@@ -75,6 +75,8 @@ class _PiperActionWorker(QObject):
         try:
             if self._action == "pull_image":
                 self._service.pull_image()
+            elif self._action == "download_model":
+                self._service.download_model(self._language, self._gender)
             elif self._action == "start":
                 self._service.start_container(self._language, self._gender)
             elif self._action == "stop":
@@ -84,7 +86,7 @@ class _PiperActionWorker(QObject):
             self.error.emit(str(exc))
 
 
-class TtsBackendSelector(QGroupBox):
+class TtsBackendSelector(QWidget):
     """
     Widget for selecting the TTS backend (Edge TTS or Piper).
 
@@ -99,13 +101,15 @@ class TtsBackendSelector(QGroupBox):
             setup_service: PiperSetupService,
             parent: Optional[QWidget] = None,
     ) -> None:
-        super().__init__("TTS Engine", parent)
+        super().__init__(parent)
         self._setup_service = setup_service
         self._current_language = "ru"
         self._current_gender = "male"
         self._last_check_result: Optional[PiperPrerequisiteResult] = None
         self._check_thread: Optional[QThread] = None
         self._action_thread: Optional[QThread] = None
+        self._check_worker: Optional[_PiperCheckWorker] = None
+        self._action_worker: Optional[_PiperActionWorker] = None
 
         self._build_ui()
 
@@ -114,16 +118,26 @@ class TtsBackendSelector(QGroupBox):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        self.setStyleSheet(Styles.GROUP_BOX_STYLE)
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(Styles.SPACING_SMALL)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(main_layout)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(6)
-        self.setLayout(layout)
+        title_label = QLabel("TTS Engine:")
+        title_label.setStyleSheet(Styles.LABEL_FIELD)
+        main_layout.addWidget(title_label)
+
+        self._container = QFrame()
+        self._container.setObjectName("TtsBackendContainer")
+        self._container.setStyleSheet(Styles.TTS_CONTAINER_STYLE)
+
+        container_layout = QVBoxLayout(self._container)
+        container_layout.setContentsMargins(12, 10, 12, 10)
+        container_layout.setSpacing(8)
 
         # --- Radio buttons ---
         radio_row = QHBoxLayout()
-        radio_row.setSpacing(15)
+        radio_row.setSpacing(25)
         self._button_group = QButtonGroup(self)
 
         self._edge_radio = QRadioButton("Edge TTS (Cloud)")
@@ -144,21 +158,25 @@ class TtsBackendSelector(QGroupBox):
         radio_row.addWidget(self._edge_radio)
         radio_row.addWidget(self._piper_radio)
         radio_row.addStretch()
-        layout.addLayout(radio_row)
+        container_layout.addLayout(radio_row)
 
         # --- Piper status panel (hidden when Edge TTS is selected) ---
         self._piper_panel = QFrame()
+        self._piper_panel.setObjectName("PiperPanel")
         self._piper_panel.setFrameShape(QFrame.Shape.StyledPanel)
         self._piper_panel.setStyleSheet("""
-            QFrame {
+            QFrame#PiperPanel {
                 border: 1px solid #e0e0e0;
                 border-radius: 6px;
                 background-color: #f9f9f9;
                 margin-top: 6px;
             }
             QLabel {
+                border: none;
+                background-color: transparent;
                 font-size: 12px;
                 color: #333333;
+                padding: 2px 0px;
             }
             QPushButton {
                 background-color: #2196F3;
@@ -178,7 +196,8 @@ class TtsBackendSelector(QGroupBox):
             }
         """)
         piper_layout = QVBoxLayout(self._piper_panel)
-        piper_layout.setContentsMargins(8, 6, 8, 6)
+        piper_layout.setContentsMargins(10, 8, 10, 8)
+        piper_layout.setSpacing(4)
 
         # Status labels
         self._status_docker = QLabel("Docker: checking…")
@@ -191,41 +210,25 @@ class TtsBackendSelector(QGroupBox):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             piper_layout.addWidget(lbl)
 
-        # Action buttons row
+        # Action buttons row (only Re-check is needed since pull, download & start are automatic)
         btn_row = QHBoxLayout()
-        self._btn_pull_image = QPushButton("Download Image")
-        self._btn_pull_image.setEnabled(False)
-        self._btn_pull_image.setToolTip(
-            "Pull rhasspy/wyoming-piper from Docker Hub (~1 GB)."
-        )
-
-        self._btn_start = QPushButton("Start Container")
-        self._btn_start.setEnabled(False)
-        self._btn_start.setToolTip("Start the wyoming-piper Docker container.")
-
-        self._btn_stop = QPushButton("Stop Container")
-        self._btn_stop.setEnabled(False)
-        self._btn_stop.setToolTip("Stop the wyoming-piper Docker container.")
-
         self._btn_recheck = QPushButton("↻ Re-check")
         self._btn_recheck.setToolTip("Run prerequisite checks again.")
 
-        btn_row.addWidget(self._btn_pull_image)
-        btn_row.addWidget(self._btn_start)
-        btn_row.addWidget(self._btn_stop)
         btn_row.addStretch()
         btn_row.addWidget(self._btn_recheck)
         piper_layout.addLayout(btn_row)
 
+        self._piper_panel.setMinimumHeight(145)
         self._piper_panel.setVisible(False)
-        layout.addWidget(self._piper_panel)
+        container_layout.addWidget(self._piper_panel)
+
+        main_layout.addWidget(self._container)
+        self.setMinimumHeight(65)
 
         # --- Connect signals ---
         self._edge_radio.toggled.connect(self._on_radio_toggled)
         self._piper_radio.toggled.connect(self._on_radio_toggled)
-        self._btn_pull_image.clicked.connect(lambda: self._run_action("pull_image"))
-        self._btn_start.clicked.connect(lambda: self._run_action("start"))
-        self._btn_stop.clicked.connect(lambda: self._run_action("stop"))
         self._btn_recheck.clicked.connect(self._run_prerequisite_check)
 
     # ------------------------------------------------------------------
@@ -259,6 +262,7 @@ class TtsBackendSelector(QGroupBox):
         backend = self.selected_backend()
         is_piper = backend == TtsBackend.PIPER
         self._piper_panel.setVisible(is_piper)
+        self.setMinimumHeight(225 if is_piper else 65)
         if is_piper:
             self._run_prerequisite_check()
         self.backendChanged.emit(backend)
@@ -271,13 +275,13 @@ class TtsBackendSelector(QGroupBox):
             return  # Already checking
 
         self._check_thread = QThread()
-        worker = _PiperCheckWorker(
+        self._check_worker = _PiperCheckWorker(
             self._setup_service, self._current_language, self._current_gender
         )
-        worker.moveToThread(self._check_thread)
-        self._check_thread.started.connect(worker.run)
-        worker.finished.connect(self._on_check_finished)
-        worker.finished.connect(self._check_thread.quit)
+        self._check_worker.moveToThread(self._check_thread)
+        self._check_thread.started.connect(self._check_worker.run)
+        self._check_worker.finished.connect(self._on_check_finished)
+        self._check_worker.finished.connect(self._check_thread.quit)
         self._check_thread.start()
 
     def _on_check_finished(self, result: PiperPrerequisiteResult) -> None:
@@ -292,15 +296,15 @@ class TtsBackendSelector(QGroupBox):
 
         self._set_buttons_busy(True)
         self._action_thread = QThread()
-        worker = _PiperActionWorker(
+        self._action_worker = _PiperActionWorker(
             self._setup_service, action, self._current_language, self._current_gender
         )
-        worker.moveToThread(self._action_thread)
-        self._action_thread.started.connect(worker.run)
-        worker.finished.connect(self._on_action_finished)
-        worker.error.connect(self._on_action_error)
-        worker.status.connect(self._status_container.setText)
-        worker.finished.connect(self._action_thread.quit)
+        self._action_worker.moveToThread(self._action_thread)
+        self._action_thread.started.connect(self._action_worker.run)
+        self._action_worker.finished.connect(self._on_action_finished)
+        self._action_worker.error.connect(self._on_action_error)
+        self._action_worker.status.connect(self._status_container.setText)
+        self._action_worker.finished.connect(self._action_thread.quit)
         self._action_thread.start()
 
     def _on_action_finished(self) -> None:
@@ -352,15 +356,10 @@ class TtsBackendSelector(QGroupBox):
             )
 
     def _update_button_states(self, result: PiperPrerequisiteResult) -> None:
-        self._btn_pull_image.setEnabled(
-            result.docker_available and not result.image_available
-        )
-        self._btn_start.setEnabled(result.can_start_container and not result.container_running)
-        self._btn_stop.setEnabled(result.container_running)
+        self._btn_recheck.setEnabled(True)
 
     def _set_buttons_busy(self, busy: bool) -> None:
-        for btn in (self._btn_pull_image, self._btn_start, self._btn_stop, self._btn_recheck):
-            btn.setEnabled(not busy)
+        self._btn_recheck.setEnabled(not busy)
 
 
 # Import here to avoid circular import at module level

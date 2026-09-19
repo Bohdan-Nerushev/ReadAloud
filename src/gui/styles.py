@@ -152,7 +152,7 @@ class Styles:
         }}
     """
     
-    LABEL_TITLE = f"font-size: 22px; font-weight: bold; color: {Palette.TEXT_PRIMARY}; margin-bottom: 10px;"
+    LABEL_TITLE = f"font-size: 22px; font-weight: bold; color: {Palette.TEXT_PRIMARY}; padding-top: 10px; margin-bottom: 10px;"
     LABEL_FIELD = f"font-size: 13px; color: {Palette.TEXT_SECONDARY}; font-weight: bold;"
     LABEL_STATUS = f"font-size: 15px; color: {Palette.TEXT_PRIMARY}; padding: 10px; font-weight: bold; min-height: 40px;"
     
@@ -172,22 +172,25 @@ class Styles:
             border: 1px solid {Palette.BORDER_DEFAULT};
             border-radius: 6px;
             margin-top: 10px;
-            padding: 6px 10px 6px 10px;
+            padding: 8px 12px 10px 12px;
             background-color: {Palette.BG_CARD};
+            min-height: 55px;
         }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            left: 10px;
-            padding: 0 5px;
+    """
+    
+    TTS_CONTAINER_STYLE = f"""
+        QFrame#TtsBackendContainer {{
             background-color: {Palette.BG_CARD};
-            color: {Palette.TEXT_SECONDARY};
+            border: 1px solid {Palette.BORDER_DEFAULT};
+            border-radius: 6px;
         }}
         QRadioButton {{
             font-size: 13px;
+            font-weight: bold;
             color: {Palette.TEXT_PRIMARY};
             spacing: 8px;
-            padding: 2px 0px;
+            padding: 4px 8px;
+            min-height: 24px;
         }}
         QRadioButton::indicator {{
             width: 16px;
@@ -222,11 +225,11 @@ class Styles:
     """
     
     WINDOW_WIDTH = 1100
-    WINDOW_HEIGHT = 1000
+    WINDOW_HEIGHT = 900
     WINDOW_MIN_WIDTH = 900
     WINDOW_MIN_HEIGHT = 650
     
-    QUEUE_LIST_HEIGHT = 450
+    QUEUE_LIST_HEIGHT = 200
     QUEUE_ITEM_HEIGHT = 165
     PROGRESS_BAR_HEIGHT = 35
     QUEUE_ITEM_PROGRESS_HEIGHT = 20

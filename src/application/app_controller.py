@@ -792,7 +792,19 @@ class ApplicationController(QObject):
             current_task.message = "Paused"
             
         self._save_state(force=True)
-        self._auto_stop_piper_if_idle()
+        self._stop_piper_on_app_shutdown()
+
+    def _stop_piper_on_app_shutdown(self) -> None:
+        """Stops Piper Docker container on application exit to release system resources."""
+        if self._piper_setup_service is None:
+            return
+        try:
+            prereq = self._piper_setup_service.check_prerequisites("ru", "male")
+            if prereq.container_running:
+                logging.info("Application shutting down: stopping Piper Docker container...")
+                self._piper_setup_service.stop_container()
+        except Exception as exc:
+            logging.warning("Failed to stop Piper container on shutdown: %s", exc)
 
     def stop_generation(self) -> None:
         """Stops the audio generation for all tasks and cleans up."""

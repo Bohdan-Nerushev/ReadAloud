@@ -6,7 +6,7 @@ This module defines the primary GUI window that assembles all widgets.
 
 from typing import Optional
 
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout, QFrame
 from PyQt6.QtCore import Qt
 from src.gui.widgets.project_input import ProjectInputWidget
 from src.gui.widgets.file_selector import FileSelectorWidget
@@ -19,7 +19,7 @@ from src.gui.widgets.control_buttons import ControlButtonsWidget
 from src.gui.widgets.output_selector import OutputSelectorWidget
 from src.gui.widgets.queue_list import QueueListWidget
 from src.gui.widgets.tts_backend_selector import TtsBackendSelector
-from src.gui.styles import Styles
+from src.gui.styles import Styles, Palette
 from src.domain.models import TtsBackend
 
 
@@ -62,10 +62,17 @@ class MainWindow(QMainWindow):
             Styles.WINDOW_MIN_HEIGHT
         )
         
-        # Main central widget
+        # Main central scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet(f"background-color: {Palette.BG_MAIN}; border: none;")
+        self.setCentralWidget(scroll_area)
+
+        # Main central widget inside scroll area
         main_widget = QWidget()
         main_widget.setStyleSheet(Styles.MAIN_WINDOW_STYLE)
-        self.setCentralWidget(main_widget)
+        scroll_area.setWidget(main_widget)
         
         # Main layout
         main_layout = QVBoxLayout(main_widget)
@@ -186,19 +193,16 @@ class MainWindow(QMainWindow):
 
     def _on_backend_changed(self, backend: TtsBackend) -> None:
         """
-        Locks or unlocks the thread selector depending on the selected TTS backend.
+        Shows or hides Voice Gender, Playback Speed, and Number of Threads
+        depending on the selected TTS backend.
         
-        Piper local synthesis is single-threaded, so the thread count control
-        is visually disabled/locked when Piper is selected.
+        When Piper (Local Docker) is selected, these controls disappear completely
+        (setVisible(False)) and reappear (setVisible(True)) when switching back to Edge TTS.
         """
-        is_piper = backend == TtsBackend.PIPER
-        self.thread_selector.setEnabled(not is_piper)
-        if is_piper:
-            self.thread_selector.setToolTip(
-                "Piper (Local Docker) uses 1 thread for local synthesis."
-            )
-        else:
-            self.thread_selector.setToolTip("")
+        is_edge = backend == TtsBackend.EDGE_TTS
+        self.gender_selector.setVisible(is_edge)
+        self.speed_selector.setVisible(is_edge)
+        self.thread_selector.setVisible(is_edge)
     
     def set_inputs_enabled(
             self,

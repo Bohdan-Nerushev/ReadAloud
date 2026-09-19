@@ -146,46 +146,44 @@ class PiperSetupService(QObject):
 
         # 2. Image availability
         result.image_available = self._docker_manager.is_piper_image_available()
-        if not result.image_available:
-            result.error_message = (
-                "The 'rhasspy/wyoming-piper' Docker image is not present locally. "
-                "Click 'Download Image' to pull it (requires internet, ~1 GB)."
-            )
 
-        # 3. Port conflict check
-        if self._docker_manager.is_port_occupied_by_other(self._piper_port):
-            result.port_conflict = True
-            result.error_message = (
-                f"Port {self._piper_port} is already in use by another process. "
-                f"Find and stop it: ss -tlnp | grep {self._piper_port}"
-            )
+        # 3. Container running check
+        result.container_running = self._docker_manager.is_piper_port_open(self._piper_port)
 
-        # 4. Container running check (only meaningful if image exists)
-        if result.image_available:
-            result.container_running = self._docker_manager.is_piper_port_open(self._piper_port)
-
-        # 5. Model presence check
-        if not self._model_manager.is_language_supported(language):
-            result.model_present = False
-            result.error_message = (
-                f"Language '{language}' is not supported by Piper. "
-                f"Switch to Edge TTS or choose a supported language."
-            )
+        if result.container_running:
+            # If the Piper container is open and responding, it is actively serving synthesis.
+            result.port_conflict = False
+            result.model_present = True
+            result.error_message = ""
         else:
-            voice = self._model_manager.get_voice_for_language(language, gender)
-            result.model_present = self._model_manager.is_model_present(voice)
-            if not result.model_present:
-                result.missing_model_files = self._model_manager.get_missing_model_files(voice)
-                size_hint = self._model_manager.format_size_for_display(voice)
+            if not result.image_available:
                 result.error_message = (
-                    f"Voice model '{voice}' is not downloaded. "
-                    f"Click 'Download Model' to fetch it ({size_hint})."
+                    "The 'rhasspy/wyoming-piper' Docker image is not present locally "
+                    "(will be pulled automatically)."
                 )
 
+            # Check port conflict only if port is open but NOT by running Piper container
+            result.port_conflict = self._docker_manager.is_port_occupied_by_other(self._piper_port)
+            if result.port_conflict:
+                result.error_message = f"Port {self._piper_port} is occupied by another process."
+
+            # Model presence check
+            if not self._model_manager.is_language_supported(language):
+                result.model_present = False
+                result.error_message = (
+                    f"Language '{language}' is not supported by Piper. "
+                    f"Switch to Edge TTS or choose a supported language."
+                )
+            else:
+                voice = self._model_manager.get_voice_for_language(language, gender)
+                result.model_present = self._model_manager.is_model_present(voice)
+                if not result.model_present:
+                    result.missing_model_files = self._model_manager.get_missing_model_files(voice)
+
         logger.info(
-            "Piper prerequisite check: docker=%s image=%s model=%s conflict=%s",
+            "Piper prerequisite check: docker=%s image=%s model=%s conflict=%s running=%s",
             result.docker_available, result.image_available,
-            result.model_present, result.port_conflict,
+            result.model_present, result.port_conflict, result.container_running,
         )
         self.prerequisiteCheckCompleted.emit(result)
         return result
@@ -197,9 +195,7 @@ class PiperSetupService(QObject):
     def start_container(self, language: str, gender: str) -> None:
         """
         Starts the wyoming-piper Docker container for the given voice.
-
-        The voice is resolved from (language, gender) and passed to docker compose
-        via the PIPER_VOICE environment variable.
+        Automatically pulls Docker image or downloads voice model if missing.
 
         Must be called from a background thread (blocks until container is up).
         Emits ``containerStarted`` on success or ``setupError`` on failure.
@@ -209,7 +205,15 @@ class PiperSetupService(QObject):
             gender:   "male" or "female".
         """
         try:
+            # 1. Auto-pull Docker image if missing
+            if not self._docker_manager.is_piper_image_available():
+                self.pull_image()
+
+            # 2. Auto-download voice model files if missing
             voice = self._model_manager.get_voice_for_language(language, gender)
+            if not self._model_manager.is_model_present(voice):
+                self.download_model(language, gender)
+
             models_dir = str(self._model_manager.models_dir)
 
             self.statusMessage.emit(f"Starting Piper container with voice '{voice}' ...")
@@ -275,6 +279,25 @@ class PiperSetupService(QObject):
         except PiperNotAvailableException as exc:
             logger.error("Image pull failed: %s", exc)
             self.setupError.emit(str(exc))
+
+    def download_model(self, language: str, gender: str) -> None:
+        """
+        Downloads voice model files for (language, gender) from Hugging Face.
+
+        Must be called from a background thread.
+        Emits ``statusMessage`` during progress and ``setupError`` on failure.
+        """
+        try:
+            voice = self._model_manager.get_voice_for_language(language, gender)
+            self.statusMessage.emit(f"Downloading voice model '{voice}' from Hugging Face...")
+            self._model_manager.download_model(
+                voice,
+                progress_callback=lambda msg: self.statusMessage.emit(msg)
+            )
+            self.statusMessage.emit(f"Voice model '{voice}' downloaded successfully.")
+        except Exception as exc:
+            logger.error("Failed to download voice model: %s", exc, exc_info=True)
+            self.setupError.emit(f"Could not download voice model: {exc}")
 
     # ------------------------------------------------------------------
     # Internal helpers

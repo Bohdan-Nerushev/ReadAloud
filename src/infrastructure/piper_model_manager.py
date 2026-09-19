@@ -17,7 +17,7 @@ Design decisions:
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import Callable, List, Optional
 
 from src.domain.exceptions import PiperModelMissingException
 from src.domain.piper_audio_generator import PIPER_VOICE_MAPPING, PIPER_SUPPORTED_LANGUAGES
@@ -174,6 +174,46 @@ class PiperModelManager:
         size_bytes = self.estimate_model_size_bytes(voice_name)
         size_mb = size_bytes // (1024 * 1024)
         return f"~{size_mb} MB"
+
+    def download_model(
+            self,
+            voice_name: str,
+            progress_callback: Optional[Callable[[str], None]] = None
+    ) -> None:
+        """
+        Downloads .onnx and .onnx.json files for voice_name from Hugging Face.
+
+        Args:
+            voice_name: Piper voice identifier (e.g. "ru_RU-dmitri-medium").
+            progress_callback: Optional callback receiving progress text messages.
+        """
+        parts = voice_name.split("-")
+        if len(parts) < 3:
+            raise ValueError(f"Invalid voice name format: {voice_name}")
+        locale = parts[0]
+        lang = locale.split("_")[0]
+        name = parts[1]
+        quality = parts[2]
+
+        base_url = (
+            f"https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+            f"{lang}/{locale}/{name}/{quality}/{voice_name}"
+        )
+
+        import urllib.request
+        for ext in _MODEL_EXTENSIONS:
+            file_url = f"{base_url}{ext}"
+            dest_path = self._models_dir / f"{voice_name}{ext}"
+            temp_path = self._models_dir / f"{voice_name}{ext}.tmp"
+
+            if progress_callback:
+                progress_callback(f"Downloading {voice_name}{ext}...")
+
+            logger.info("Downloading %s to %s", file_url, dest_path)
+            urllib.request.urlretrieve(file_url, temp_path)
+            temp_path.replace(dest_path)
+
+        logger.info("Voice model '%s' downloaded successfully to %s", voice_name, self._models_dir)
 
     # ------------------------------------------------------------------
     # Internal helpers
