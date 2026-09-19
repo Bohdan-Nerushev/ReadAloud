@@ -54,10 +54,10 @@ def setup_logging(log_dir: Optional[str] = None) -> None:
         
         # Structured machine-readable format with Correlation ID
         file_formatter = logging.Formatter(
-            '%(asctime)s [%(correlation_id)s] [%(levelname)s] %(name)s: %(message)s'
+            '%(asctime)s [%(correlation_id)s] [%(levelname)-7s] %(name)s: %(message)s'
         )
         console_formatter = logging.Formatter(
-            '%(asctime)s [%(correlation_id)s] %(levelname)s: %(message)s'
+            '%(asctime)s [%(correlation_id)s] %(levelname)-7s: %(message)s'
         )
         
         # File Handler (Rotating)
@@ -96,7 +96,18 @@ def setup_logging(log_dir: Optional[str] = None) -> None:
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
 
-        
+        # Silence verbose 3rd-party loggers (pydub ffmpeg outputs, urllib3, asyncio, etc.)
+        for third_party_logger in (
+            "pydub",
+            "pydub.converter",
+            "urllib3",
+            "asyncio",
+            "httpx",
+            "httpcore",
+            "wyoming",
+        ):
+            logging.getLogger(third_party_logger).setLevel(logging.WARNING)
+
         logging.info("Logging system initialized with Correlation ID support")
         
     except Exception as e:

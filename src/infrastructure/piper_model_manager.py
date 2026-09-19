@@ -101,7 +101,6 @@ class PiperModelManager:
             file_path = self._models_dir / f"{voice_name}{ext}"
             if not file_path.exists() or file_path.stat().st_size == 0:
                 missing.append(str(file_path))
-                logger.debug("Model file missing or empty: %s", file_path)
         return missing
 
     def validate_model_or_raise(self, voice_name: str) -> None:
