@@ -15,15 +15,17 @@ from typing import Optional, List, Any, Dict, Set
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
 
-from src.domain.models import ProjectConfig, AudioChunk, GenerationTask, TaskStatus
+from src.domain.models import ProjectConfig, AudioChunk, GenerationTask, TaskStatus, TtsBackend
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
+from src.domain.tts_generator_protocol import TtsGeneratorProtocol
 import os
 from src.infrastructure.file_manager import FileManager
 from src.application.services.queue_service import QueueService
 from src.application.services.generation_service import GenerationService
 from src.application.services.assembly_service import AssemblyService
 from src.application.services.persistence_service import PersistenceService
+from src.application.services.piper_setup_service import PiperSetupService
 from src.infrastructure.logging_config import set_correlation_id
 
 
@@ -187,7 +189,9 @@ class ApplicationController(QObject):
             file_manager: FileManager,
             generation_service: GenerationService,
             assembly_service: AssemblyService,
-            persistence_service: PersistenceService
+            persistence_service: PersistenceService,
+            audio_generator_resolver=None,
+            piper_setup_service: Optional[PiperSetupService] = None,
     ) -> None:
         """Initialize the ApplicationController."""
         super().__init__()
@@ -196,11 +200,16 @@ class ApplicationController(QObject):
         self._text_processor = text_processor
         self._text_chunker = text_chunker
         self._file_manager = file_manager
-        
+
         # Injected Services
         self._generation_service = generation_service
         self._assembly_service = assembly_service
         self._persistence_service = persistence_service
+        self._piper_setup_service = piper_setup_service
+
+        # Callable (backend: TtsBackend) -> TtsGeneratorProtocol
+        # Allows dynamic switching of the TTS generator per task.
+        self._audio_generator_resolver = audio_generator_resolver
 
 
         self._prep_worker: Optional[PreparationWorker] = None
@@ -271,7 +280,12 @@ class ApplicationController(QObject):
         try:
             set_correlation_id(str(task.id))
             
-            logging.info(f"Starting task: {task.id} ({task.config.project_name})")
+            logging.info(
+                "Starting task %s: project='%s', backend='%s', lang='%s', gender='%s', threads=%d, input='%s'",
+                task.id, task.config.project_name, task.config.tts_backend.value,
+                task.config.language, task.config.gender, task.config.thread_count,
+                task.config.input_file_path,
+            )
 
             self._is_stopped = False
             self.progressUpdated.emit(0, 0, "Preparing...", 0.0)
@@ -287,11 +301,9 @@ class ApplicationController(QObject):
             self._start_preparation_worker(task)
             return True
         except Exception as e:
-            logging.error(f"Failed to start task: {e}", exc_info=True)
+            logging.error(f"Failed to start task {task.id}: {e}", exc_info=True)
             self._handle_task_failure(f"Failed to start: {str(e)}")
             return False
-
-
 
     def _initialize_task_state(self, task: GenerationTask) -> None:
         """Initializes state for a new task."""
@@ -354,7 +366,6 @@ class ApplicationController(QObject):
             logging.error(f"Error after preparation: {e}", exc_info=True)
             self.errorOccurred.emit(f"System error after preparation: {e}")
 
-
     def _on_preparation_error(self, error_msg: str) -> None:
         """Called when preparation worker fails."""
         logging.error(f"Preparation worker error: {error_msg}")
@@ -367,9 +378,51 @@ class ApplicationController(QObject):
         if not task:
             return
 
+        # Switch the TTS generator to match the task's configured backend.
+        # This must happen before start_generation() is called.
+        if self._audio_generator_resolver is not None:
+            generator = self._audio_generator_resolver(task.config.tts_backend)
+            self._generation_service.switch_generator(generator)
+            logging.info(
+                "Switched TTS generator to '%s' (backend='%s') for task %s",
+                type(generator).__name__, task.config.tts_backend.value, task.id,
+            )
+
+        # Auto-start Piper Docker container if needed for Piper backend
+        if task.config.tts_backend == TtsBackend.PIPER and self._piper_setup_service is not None:
+            try:
+                prereq = self._piper_setup_service.check_prerequisites(
+                    task.config.language, task.config.gender
+                )
+                logging.info(
+                    "Piper prerequisite check for task %s: docker=%s, image=%s, model=%s, conflict=%s, running=%s",
+                    task.id, prereq.docker_available, prereq.image_available,
+                    prereq.model_present, prereq.port_conflict, prereq.container_running,
+                )
+                if not prereq.container_running:
+                    if not prereq.can_start_container:
+                        err_msg = prereq.error_message or "Piper prerequisites not met."
+                        logging.error(
+                            "Cannot start Piper container for task %s: %s (missing_files=%s)",
+                            task.id, err_msg, prereq.missing_model_files,
+                        )
+                        self._handle_task_failure(f"Piper error: {err_msg}")
+                        return
+                    logging.info(
+                        "Auto-starting Piper Docker container for task %s (%s/%s)...",
+                        task.id, task.config.language, task.config.gender,
+                    )
+                    self._piper_setup_service.start_container(
+                        task.config.language, task.config.gender
+                    )
+            except Exception as e:
+                logging.error("Failed to auto-start Piper container for task %s: %s", task.id, e, exc_info=True)
+                self._handle_task_failure(f"Failed to start Piper container: {e}")
+                return
+
         self._generation_service.start_generation(
-            task, 
-            self._chunks, 
+            task,
+            self._chunks,
             self._audio_dir
         )
 
@@ -739,6 +792,7 @@ class ApplicationController(QObject):
             current_task.message = "Paused"
             
         self._save_state(force=True)
+        self._auto_stop_piper_if_idle()
 
     def stop_generation(self) -> None:
         """Stops the audio generation for all tasks and cleans up."""
@@ -778,6 +832,28 @@ class ApplicationController(QObject):
         self._save_state(force=True)
         self._process_queue()
         self._emit_global_progress()
+        self._auto_stop_piper_if_idle()
+
+    def _auto_stop_piper_if_idle(self) -> None:
+        """Auto-stops Piper container if no pending or processing tasks remain."""
+        if self._piper_setup_service is None:
+            return
+        all_tasks = self._queue_service.get_all_tasks()
+        has_active_or_pending = any(
+            t.status in (TaskStatus.PENDING, TaskStatus.PROCESSING) for t in all_tasks
+        )
+        if not has_active_or_pending:
+            try:
+                # Use a dummy check to see if container is running
+                prereq = self._piper_setup_service.check_prerequisites("ru", "male")
+                if prereq.container_running:
+                    logging.info(
+                        "No active or pending tasks remaining in queue. "
+                        "Auto-stopping Piper Docker container to free resources..."
+                    )
+                    self._piper_setup_service.stop_container()
+            except Exception as exc:
+                logging.warning("Auto-stopping Piper container failed: %s", exc)
 
     def _save_state(self, force: bool = False) -> None:
         """Saves current queue state to persistence with 3-second throttling unless forced."""

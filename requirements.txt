@@ -2,4 +2,5 @@ PyQt6>=6.11.0
 edge-tts>=7.2.8
 pydub>=0.25.1
 mutagen>=1.48.1
+wyoming>=1.5.4
 

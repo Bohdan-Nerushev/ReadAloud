@@ -14,6 +14,18 @@ from pathlib import Path
 from src.domain.exceptions import ConfigurationException
 
 
+class TtsBackend(Enum):
+    """
+    Supported TTS backend modes.
+
+    EDGE_TTS: Microsoft Edge TTS (cloud, default). Requires internet connection.
+    PIPER:    Local synthesis via rhasspy/wyoming-piper Docker container.
+              Requires Docker and downloaded voice model files.
+    """
+    EDGE_TTS = "edge_tts"
+    PIPER = "piper"
+
+
 @dataclass(frozen=True)
 class ProjectConfig:
     """
@@ -26,6 +38,7 @@ class ProjectConfig:
     thread_count: int
     output_dir_path: str
     speed: float = 1.0
+    tts_backend: TtsBackend = TtsBackend.EDGE_TTS
 
     def __post_init__(
             self

@@ -19,7 +19,7 @@ from typing import List, Optional, Tuple
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from src.domain.models import GenerationTask, AudioChunk
-from src.domain.audio_generator import AudioGenerator
+from src.domain.tts_generator_protocol import TtsGeneratorProtocol
 from src.infrastructure.thread_manager import ThreadManager
 from src.infrastructure.progress_tracker import ProgressTracker
 from src.infrastructure.logging_config import set_correlation_id
@@ -45,7 +45,7 @@ class GenerationService(QObject):
     # Chunks per batch submitted to the thread pool
     BATCH_GEN_SIZE = 10
 
-    def __init__(self, audio_generator: AudioGenerator) -> None:
+    def __init__(self, audio_generator: TtsGeneratorProtocol) -> None:
         """Initialize the GenerationService."""
         super().__init__()
         self._audio_generator = audio_generator
@@ -57,6 +57,19 @@ class GenerationService(QObject):
         self._output_dir: Optional[str] = None
 
         self._is_stopped = False
+
+    def switch_generator(self, generator: TtsGeneratorProtocol) -> None:
+        """
+        Replaces the active TTS generator with a different implementation.
+
+        Must be called before start_generation(), not during active synthesis.
+        Allows AppController to switch between Edge TTS and Piper per task.
+
+        Args:
+            generator: New TTS generator conforming to TtsGeneratorProtocol.
+        """
+        self._audio_generator = generator
+        logging.info("TTS generator switched to: %s", type(generator).__name__)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -227,6 +240,11 @@ class GenerationService(QObject):
 
         set_correlation_id(correlation_id)
 
+        logging.info(
+            "Generating batch of %d chunk(s) via '%s' (lang='%s', gender='%s', threads=%d)",
+            len(batch), type(self._audio_generator).__name__, language, gender, max_workers,
+        )
+
         try:
             results = self._audio_generator.generate_audio_batch(
                 batch,
@@ -271,7 +289,7 @@ class GenerationService(QObject):
 
         except Exception as e:
             # Unexpected error in the batch runner itself (not per-chunk)
-            logging.error(f"Unexpected error in batch generation: {e}", exc_info=True)
+            logging.error(f"Unexpected error in batch generation ({type(self._audio_generator).__name__}): {e}", exc_info=True)
             if not self._is_stopped:
                 self.batchFailed.emit(batch, str(e))
                 for _ in batch:

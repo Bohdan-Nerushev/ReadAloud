@@ -22,7 +22,7 @@ from src.infrastructure.ioc import Container
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from src.gui.main_window import MainWindow
 from src.application.app_controller import ApplicationController
-from src.domain.models import ProjectConfig, TaskStatus, GenerationTask
+from src.domain.models import ProjectConfig, TaskStatus, GenerationTask, TtsBackend
 from src.domain.exceptions import ConfigurationException
 
 
@@ -102,6 +102,12 @@ class ReadAloudApplication:
         thread_count = self._window.thread_selector.get_thread_count()
         output_dir = self._window.output_selector.get_selected_directory()
 
+        # Read selected TTS backend from the selector widget.
+        # Falls back to EDGE_TTS when widget is not present (e.g. in tests).
+        tts_backend = TtsBackend.EDGE_TTS
+        if self._window.tts_backend_selector is not None:
+            tts_backend = self._window.tts_backend_selector.selected_backend()
+
         user_project_name = self._window.project_input.get_project_name().strip()
         is_user_modified = self._window.project_input.is_user_modified()
 
@@ -130,7 +136,8 @@ class ReadAloudApplication:
                 gender=gender,
                 speed=speed,
                 thread_count=thread_count,
-                output_dir_path=output_dir
+                output_dir_path=output_dir,
+                tts_backend=tts_backend,
             )
             configs.append(config)
 
@@ -260,7 +267,7 @@ def main() -> None:
         container = Container()
         controller = container.app_controller
 
-        window = MainWindow()
+        window = MainWindow(piper_setup_service=container.piper_setup_service)
         coordinator = ReadAloudApplication(window, controller)
 
         controller.restore_state()

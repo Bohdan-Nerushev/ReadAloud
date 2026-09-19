@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Define installation directory relative to where the command is executed
-INSTALL_DIR="$PWD/ReadAloud"
+# Define project root directory relative to this script
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "=================================================="
 echo "    ✨ ReadAloud Application Installer ✨"
@@ -31,18 +32,9 @@ if ! command -v git &> /dev/null; then
     fi
 fi
 
-# 2. Clone or update repository
-if [ -d "$INSTALL_DIR/.git" ]; then
-    echo "🚀 Repository already exists at $INSTALL_DIR. Updating to the latest master branch version..."
-    cd "$INSTALL_DIR" || exit 1
-    git -c http.sslVerify=false fetch origin master
-    git -c http.sslVerify=false checkout master
-    git -c http.sslVerify=false reset --hard origin/master
-else
-    echo "📦 Cloning ReadAloud repository (master branch) to $INSTALL_DIR..."
-    git -c http.sslVerify=false clone -b master https://github.com/Bohdan-Nerushev/ReadAloud.git "$INSTALL_DIR"
-    cd "$INSTALL_DIR" || exit 1
-fi
+# 2. Check repository directory
+echo "🚀 Using ReadAloud repository at $INSTALL_DIR"
+cd "$INSTALL_DIR" || exit 1
 
 # 3. Check and install Python 3 & venv
 if ! command -v python3 &> /dev/null; then
@@ -95,7 +87,10 @@ echo "📚 Installing Python dependencies..."
 ./venv/bin/pip install -r requirements.txt
 
 # 7. Create desktop shortcut and register as system application
-DESKTOP_DIR=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
+DESKTOP_DIR=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Schreibtisch")
+if [ ! -d "$DESKTOP_DIR" ]; then
+    DESKTOP_DIR="$HOME/Desktop"
+fi
 APPS_DIR="$HOME/.local/share/applications"
 
 DESKTOP_ENTRY="[Desktop Entry]

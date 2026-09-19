@@ -164,6 +164,37 @@ class Styles:
         }}
     """
     
+    GROUP_BOX_STYLE = f"""
+        QGroupBox {{
+            font-size: 13px;
+            font-weight: bold;
+            color: {Palette.TEXT_SECONDARY};
+            border: 1px solid {Palette.BORDER_DEFAULT};
+            border-radius: 6px;
+            margin-top: 10px;
+            padding: 6px 10px 6px 10px;
+            background-color: {Palette.BG_CARD};
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 10px;
+            padding: 0 5px;
+            background-color: {Palette.BG_CARD};
+            color: {Palette.TEXT_SECONDARY};
+        }}
+        QRadioButton {{
+            font-size: 13px;
+            color: {Palette.TEXT_PRIMARY};
+            spacing: 8px;
+            padding: 2px 0px;
+        }}
+        QRadioButton::indicator {{
+            width: 16px;
+            height: 16px;
+        }}
+    """
+    
     LABEL_FILE_DISPLAY = f"""
         color: {Palette.TEXT_PRIMARY}; 
         background-color: {Palette.BG_INPUT}; 

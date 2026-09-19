@@ -4,6 +4,8 @@ Main application window.
 This module defines the primary GUI window that assembles all widgets.
 """
 
+from typing import Optional
+
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QScrollArea, QHBoxLayout
 from PyQt6.QtCore import Qt
 from src.gui.widgets.project_input import ProjectInputWidget
@@ -16,7 +18,10 @@ from src.gui.widgets.progress_display import ProgressDisplayWidget
 from src.gui.widgets.control_buttons import ControlButtonsWidget
 from src.gui.widgets.output_selector import OutputSelectorWidget
 from src.gui.widgets.queue_list import QueueListWidget
+from src.gui.widgets.tts_backend_selector import TtsBackendSelector
 from src.gui.styles import Styles
+from src.domain.models import TtsBackend
+
 
 class MainWindow(QMainWindow):
     """
@@ -26,10 +31,18 @@ class MainWindow(QMainWindow):
     """
     
     def __init__(
-            self
+            self,
+            piper_setup_service=None,
     ) -> None:
-        """Initialize the MainWindow."""
+        """
+        Initialize the MainWindow.
+
+        Args:
+            piper_setup_service: Optional PiperSetupService injected by the coordinator.
+                                 When provided, enables the Piper TTS backend selector.
+        """
         super().__init__()
+        self._piper_setup_service = piper_setup_service
         self._setup_ui()
         self._connect_signals()
     
@@ -109,6 +122,16 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.thread_selector)
         
         card_layout.addLayout(settings_layout)
+
+        # TTS Backend Selector (Piper / Edge TTS switcher)
+        # Only shown when PiperSetupService is available (always in normal usage).
+        self.tts_backend_selector: Optional[TtsBackendSelector] = None
+        if self._piper_setup_service is not None:
+            self.tts_backend_selector = TtsBackendSelector(
+                setup_service=self._piper_setup_service,
+                parent=config_card,
+            )
+            card_layout.addWidget(self.tts_backend_selector)
         
         main_layout.addWidget(config_card)
         
@@ -129,6 +152,14 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Connects internal widget signals."""
         self.file_selector.fileBasenameExtracted.connect(self._on_file_basename_extracted)
+
+        # Keep TtsBackendSelector's model-check context in sync with language/gender selectors,
+        # and lock thread_selector when Piper is active (since Piper is single-threaded).
+        if self.tts_backend_selector is not None:
+            self.language_selector.languageChanged.connect(self._on_language_or_gender_changed)
+            self.gender_selector.genderChanged.connect(self._on_language_or_gender_changed)
+            self.tts_backend_selector.backendChanged.connect(self._on_backend_changed)
+            self._on_backend_changed(self.tts_backend_selector.selected_backend())
     
     def _on_file_basename_extracted(
             self,
@@ -142,6 +173,32 @@ class MainWindow(QMainWindow):
         """
         if not self.project_input.is_user_modified():
             self.project_input.set_project_name(basename)
+
+    def _on_language_or_gender_changed(self, _: str = "") -> None:
+        """
+        Propagates language/gender changes to TtsBackendSelector so it can
+        re-check whether the Piper voice model for the new selection is present.
+        """
+        if self.tts_backend_selector is not None:
+            lang = self.language_selector.get_selected_language()
+            gender = self.gender_selector.get_selected_gender()
+            self.tts_backend_selector.set_language_and_gender(lang, gender)
+
+    def _on_backend_changed(self, backend: TtsBackend) -> None:
+        """
+        Locks or unlocks the thread selector depending on the selected TTS backend.
+        
+        Piper local synthesis is single-threaded, so the thread count control
+        is visually disabled/locked when Piper is selected.
+        """
+        is_piper = backend == TtsBackend.PIPER
+        self.thread_selector.setEnabled(not is_piper)
+        if is_piper:
+            self.thread_selector.setToolTip(
+                "Piper (Local Docker) uses 1 thread for local synthesis."
+            )
+        else:
+            self.thread_selector.setToolTip("")
     
     def set_inputs_enabled(
             self,
@@ -160,3 +217,5 @@ class MainWindow(QMainWindow):
         self.gender_selector.setEnabled(enabled)
         self.speed_selector.setEnabled(enabled)
         self.thread_selector.setEnabled(enabled)
+        if self.tts_backend_selector is not None:
+            self.tts_backend_selector.setEnabled(enabled)

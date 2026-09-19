@@ -24,8 +24,31 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 
 - **Python**: 3.12 or higher
 - **FFmpeg**: Essential for audio stream assembly and speed adjustments.
+- **Docker** *(Optional)*: Required only if using local neural TTS (Piper).
 - **libxcb-cursor**: Required for GUI cursor management.
-- **OS**: Linux (was tested on Ubuntu).
+- **OS**: Linux (tested on Ubuntu / Debian / Arch).
+
+---
+
+## TTS Engine Backends & Security
+
+ReadAloud provides two TTS synthesis engines:
+
+1. **Edge TTS (Cloud - Default)**:
+   - Powered by Microsoft Edge Text-to-Speech API.
+   - Fast online synthesis supporting multi-threaded requests.
+
+2. **Piper TTS (Local Neural TTS - Optional)**:
+   - High-quality neural synthesis running locally via Docker (`rhasspy/wyoming-piper`).
+   - **100% Free & Open-Source (MIT License)**: Free for personal and commercial use. No API keys, no subscriptions, no payments.
+   - **100% Private & Safe**: Performs synthesis entirely offline on your local network interface (`127.0.0.1:10200`). Zero data transmission to external servers. Your text and generated audio files never leave your computer.
+   - **Resource Management**: ReadAloud automatically starts the Docker container when synthesis begins and stops it when processing finishes to free RAM and CPU.
+
+### 🌐 Official Piper Resources & Voice Samples
+
+- 🎵 **Official Audio Samples & Demos**: [https://rhasspy.github.io/piper-samples/](https://rhasspy.github.io/piper-samples/)
+- 📦 **Official Voice Models Repository (HuggingFace)**: [https://huggingface.co/rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)
+- 💻 **Official Source Code (GitHub)**: [https://github.com/rhasspy/piper](https://github.com/rhasspy/piper)
 
 ---
 

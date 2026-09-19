@@ -1,0 +1,33 @@
+# Docker Compose configuration for rhasspy/wyoming-piper TTS server.
+#
+# Environment variables (set by PiperSetupService before calling compose up):
+#   PIPER_VOICE       - Voice model name, e.g. ru_RU-dmitri-medium (required)
+#   PIPER_MODELS_DIR  - Host directory with .onnx model files
+#                       (default: ~/.local/share/readaloud/piper_models)
+#   PIPER_PORT        - Host port to expose the Wyoming TCP server (default: 10200)
+#
+# Usage (manual):
+#   PIPER_VOICE=ru_RU-dmitri-medium docker compose -f docker/piper/docker-compose.yml up -d
+#
+# The container is managed programmatically by DockerManager via PiperSetupService.
+# Do NOT change the service name 'piper' — DockerManager references it by name.
+
+services:
+  piper:
+    image: rhasspy/wyoming-piper
+    restart: unless-stopped
+    ports:
+      - "${PIPER_PORT:-10200}:10200"
+    volumes:
+      - "${PIPER_MODELS_DIR:-~/.local/share/readaloud/piper_models}:/data"
+    command:
+      - "--voice"
+      - "${PIPER_VOICE:-ru_RU-dmitri-medium}"
+    # Health check: verify the Wyoming TCP port is accepting connections.
+    # This allows `docker compose up --wait` to block until Piper is ready.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat /dev/null > /dev/tcp/localhost/10200"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
