@@ -63,29 +63,16 @@ class PiperPrerequisiteResult:
 
     @property
     def can_start_container(self) -> bool:
-        """True if Docker + image + model are OK and no port conflict."""
-        return (
-            self.docker_available
-            and self.image_available
-            and self.model_present
-            and not self.port_conflict
-        )
+        """True if Docker is available and no port conflict on 10200."""
+        return self.docker_available and not self.port_conflict
 
 
 class PiperSetupService(QObject):
-    """
-    Service that orchestrates Piper TTS backend setup checks and lifecycle.
-
-    Emits Qt signals so the UI can update asynchronously (this service is
-    typically called from a background thread via QThreadPool or ThreadManager).
-    """
-
     # Emitted after check_prerequisites() completes
     prerequisiteCheckCompleted = pyqtSignal(object)  # PiperPrerequisiteResult
     # Emitted when container start/stop succeeds
     containerStarted = pyqtSignal()
     containerStopped = pyqtSignal()
-    # Emitted on any setup error with a human-readable message
     setupError = pyqtSignal(str)
     # Emitted during long operations (e.g. image pull) with progress text
     statusMessage = pyqtSignal(str)
@@ -138,8 +125,7 @@ class PiperSetupService(QObject):
         result.docker_available = self._docker_manager.is_docker_available()
         if not result.docker_available:
             result.error_message = (
-                "Docker is not available. "
-                "Install Docker Engine and ensure the daemon is running before using Piper."
+                "Docker is not available. Ensure Docker Engine is installed and daemon is running."
             )
             self.prerequisiteCheckCompleted.emit(result)
             return result

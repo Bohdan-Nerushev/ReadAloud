@@ -401,10 +401,10 @@ class ApplicationController(QObject):
                 )
                 if not prereq.container_running:
                     if not prereq.can_start_container:
-                        err_msg = prereq.error_message or "Piper prerequisites not met."
+                        err_msg = prereq.error_message or "Docker is not available or port 10200 is in use."
                         logging.error(
-                            "Cannot start Piper container for task %s: %s (missing_files=%s)",
-                            task.id, err_msg, prereq.missing_model_files,
+                            "Cannot start Piper container for task %s: %s",
+                            task.id, err_msg,
                         )
                         self._handle_task_failure(f"Piper error: {err_msg}")
                         return
@@ -799,12 +799,28 @@ class ApplicationController(QObject):
         if self._piper_setup_service is None:
             return
         try:
-            prereq = self._piper_setup_service.check_prerequisites("ru", "male")
-            if prereq.container_running:
-                logging.info("Application shutting down: stopping Piper Docker container...")
-                self._piper_setup_service.stop_container()
+            logging.info("Application shutting down: stopping Piper Docker container...")
+            self._piper_setup_service.stop_container()
         except Exception as exc:
             logging.warning("Failed to stop Piper container on shutdown: %s", exc)
+
+    def _auto_stop_piper_if_idle(self) -> None:
+        """Auto-stops Piper container if no pending or processing tasks remain."""
+        if self._piper_setup_service is None:
+            return
+        all_tasks = self._queue_service.get_all_tasks()
+        has_active_or_pending = any(
+            t.status in (TaskStatus.PENDING, TaskStatus.PROCESSING) for t in all_tasks
+        )
+        if not has_active_or_pending:
+            try:
+                logging.info(
+                    "No active or pending tasks remaining in queue. "
+                    "Auto-stopping Piper Docker container to free resources..."
+                )
+                self._piper_setup_service.stop_container()
+            except Exception as exc:
+                logging.warning("Auto-stopping Piper container failed: %s", exc)
 
     def stop_generation(self) -> None:
         """Stops the audio generation for all tasks and cleans up."""
@@ -845,27 +861,6 @@ class ApplicationController(QObject):
         self._process_queue()
         self._emit_global_progress()
         self._auto_stop_piper_if_idle()
-
-    def _auto_stop_piper_if_idle(self) -> None:
-        """Auto-stops Piper container if no pending or processing tasks remain."""
-        if self._piper_setup_service is None:
-            return
-        all_tasks = self._queue_service.get_all_tasks()
-        has_active_or_pending = any(
-            t.status in (TaskStatus.PENDING, TaskStatus.PROCESSING) for t in all_tasks
-        )
-        if not has_active_or_pending:
-            try:
-                # Use a dummy check to see if container is running
-                prereq = self._piper_setup_service.check_prerequisites("ru", "male")
-                if prereq.container_running:
-                    logging.info(
-                        "No active or pending tasks remaining in queue. "
-                        "Auto-stopping Piper Docker container to free resources..."
-                    )
-                    self._piper_setup_service.stop_container()
-            except Exception as exc:
-                logging.warning("Auto-stopping Piper container failed: %s", exc)
 
     def _save_state(self, force: bool = False) -> None:
         """Saves current queue state to persistence with 3-second throttling unless forced."""

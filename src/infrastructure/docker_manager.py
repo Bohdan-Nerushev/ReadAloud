@@ -211,23 +211,41 @@ class DockerManager:
 
     def stop_piper_compose(self) -> None:
         """
-        Stops the Piper service via docker compose.
+        Stops the Piper service via docker compose and terminates any running
+        rhasspy/wyoming-piper containers (including standalone docker run instances).
 
         Does NOT raise on failure — logs a warning instead, so the app
         shutdown is not blocked by a stop failure.
         """
-        if not self._compose_file.exists():
-            logger.warning("Compose file not found, skipping stop: %s", self._compose_file)
-            return
+        if self._compose_file.exists():
+            logger.info("Stopping Piper container via docker compose ...")
+            cmd = self._compose_cmd() + ["down"]
+            result = self._run_compose(cmd)
+            if result.returncode != 0:
+                logger.warning(
+                    "docker compose down returned exit code %d: %s",
+                    result.returncode, result.stderr.strip(),
+                )
 
-        logger.info("Stopping Piper container via docker compose ...")
-        cmd = self._compose_cmd() + ["down"]
-        result = self._run_compose(cmd)
-        if result.returncode != 0:
-            logger.warning(
-                "docker compose down returned exit code %d: %s",
-                result.returncode, result.stderr.strip(),
-            )
+        if shutil.which("docker"):
+            try:
+                res = subprocess.run(
+                    ["docker", "ps", "--filter", f"ancestor={PIPER_IMAGE}", "--format", "{{.ID}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=DOCKER_COMMAND_TIMEOUT,
+                )
+                container_ids = [c.strip() for c in res.stdout.strip().splitlines() if c.strip()]
+                for cid in container_ids:
+                    logger.info("Stopping leftover Piper container: %s", cid)
+                    subprocess.run(
+                        ["docker", "stop", cid],
+                        capture_output=True,
+                        text=True,
+                        timeout=DOCKER_COMMAND_TIMEOUT,
+                    )
+            except Exception as exc:
+                logger.warning("Failed to stop leftover Piper containers: %s", exc)
 
     def get_container_logs(self, lines: int = 50) -> str:
         """
