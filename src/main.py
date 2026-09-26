@@ -267,7 +267,10 @@ def main() -> None:
         container = Container()
         controller = container.app_controller
 
-        window = MainWindow(piper_setup_service=container.piper_setup_service)
+        window = MainWindow(
+            piper_setup_service=container.piper_setup_service,
+            xtts_setup_service=container.xtts_setup_service,
+        )
         coordinator = ReadAloudApplication(window, controller)
 
         controller.restore_state()

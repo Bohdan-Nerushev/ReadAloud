@@ -38,3 +38,8 @@ dist/
 
 # Generated user data and application output
 data/
+# XTTS-v2 speaker reference audio (large binary files)
+data/xtts_speakers/**/*.wav
+
+# XTTS-v2 speaker reference audio (large binary, user-provided)
+src/resource/xtts_speakers/**/*.wav

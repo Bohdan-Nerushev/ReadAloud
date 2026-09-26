@@ -47,5 +47,11 @@ class TestTextProcessor(unittest.TestCase):
         expected = "Header    Content with quotes and "
         self.assertEqual(self.processor.process_text(input_text), expected)
 
+    def test_process_text_removes_decorative_dividers(self):
+        """test_process_text_removes_decorative_dividers: Verifies removal of decorative dividers like ___, ---, ###."""
+        input_text = "Chapter 1\n___\nText with --- dividers and ### headers."
+        expected = "Chapter 1        Text with  dividers and  headers."
+        self.assertEqual(self.processor.process_text(input_text), expected)
+
 if __name__ == '__main__':
     unittest.main()

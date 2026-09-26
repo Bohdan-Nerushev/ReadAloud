@@ -13,10 +13,12 @@ from src.infrastructure.thread_manager import ThreadManager
 from src.infrastructure.network_manager import NetworkManager
 from src.infrastructure.docker_manager import DockerManager
 from src.infrastructure.piper_model_manager import PiperModelManager
+from src.infrastructure.xtts_model_manager import XttsModelManager
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
 from src.domain.audio_generator import AudioGenerator
 from src.domain.piper_audio_generator import PiperAudioGenerator
+from src.domain.xtts_audio_generator import XttsAudioGenerator
 from src.domain.audio_assembler import AudioAssembler
 from src.domain.models import TtsBackend
 from src.domain.tts_generator_protocol import TtsGeneratorProtocol
@@ -25,6 +27,7 @@ from src.application.services.generation_service import GenerationService
 from src.application.services.assembly_service import AssemblyService
 from src.application.services.persistence_service import PersistenceService
 from src.application.services.piper_setup_service import PiperSetupService
+from src.application.services.xtts_setup_service import XttsSetupService
 from src.application.app_controller import ApplicationController
 
 
@@ -41,16 +44,19 @@ class Container:
         self._text_chunker: Optional[TextChunker] = None
         self._audio_generator: Optional[AudioGenerator] = None
         self._piper_audio_generator: Optional[PiperAudioGenerator] = None
+        self._xtts_model_manager: Optional[XttsModelManager] = None
+        self._xtts_audio_generator: Optional[XttsAudioGenerator] = None
         self._audio_assembler: Optional[AudioAssembler] = None
         self._file_manager: Optional[FileManager] = None
         self._network_manager: Optional[NetworkManager] = None
         self._docker_manager: Optional[DockerManager] = None
         self._piper_model_manager: Optional[PiperModelManager] = None
-        
+
         self._generation_service: Optional[GenerationService] = None
         self._assembly_service: Optional[AssemblyService] = None
         self._persistence_service: Optional[PersistenceService] = None
         self._piper_setup_service: Optional[PiperSetupService] = None
+        self._xtts_setup_service: Optional[XttsSetupService] = None
         self._app_controller: Optional[ApplicationController] = None
 
 
@@ -98,11 +104,15 @@ class Container:
         """
         Returns the appropriate TTS generator for the given backend.
 
-        Piper generator is initialised lazily only when first used,
-        so there is no overhead for users who never switch to Piper.
+        Piper and XTTS generators are initialised lazily only when first used,
+        so there is no overhead for users who never switch to those backends.
+        When switching away from XTTS, the model is NOT automatically unloaded
+        here — that is triggered explicitly via XttsSetupService.unload_model().
         """
         if backend == TtsBackend.PIPER:
             return self.piper_audio_generator
+        if backend == TtsBackend.XTTS:
+            return self.xtts_audio_generator
         return self.audio_generator
 
     @property
@@ -166,6 +176,35 @@ class Container:
         return self._piper_setup_service
 
     @property
+    def xtts_model_manager(self) -> XttsModelManager:
+        """Lazy-initialised XTTS model manager."""
+        if not self._xtts_model_manager:
+            self._xtts_model_manager = XttsModelManager()
+        return self._xtts_model_manager
+
+    @property
+    def xtts_audio_generator(self) -> XttsAudioGenerator:
+        """Lazy-initialised XTTS generator. Created only when first requested."""
+        if not self._xtts_audio_generator:
+            self._xtts_audio_generator = XttsAudioGenerator(
+                model_manager=self.xtts_model_manager,
+            )
+            # Wire the generator into the setup service if it was already created.
+            if self._xtts_setup_service is not None:
+                self._xtts_setup_service.set_generator(self._xtts_audio_generator)
+        return self._xtts_audio_generator
+
+    @property
+    def xtts_setup_service(self) -> XttsSetupService:
+        """Lazy-initialised XTTS setup service."""
+        if not self._xtts_setup_service:
+            self._xtts_setup_service = XttsSetupService(
+                model_manager=self.xtts_model_manager,
+                generator=self._xtts_audio_generator,  # May be None at this point.
+            )
+        return self._xtts_setup_service
+
+    @property
     def app_controller(self) -> ApplicationController:
         if not self._app_controller:
             self._app_controller = ApplicationController(
@@ -178,6 +217,7 @@ class Container:
                 persistence_service=self.persistence_service,
                 audio_generator_resolver=self.audio_generator_for_backend,
                 piper_setup_service=self.piper_setup_service,
+                xtts_setup_service=self.xtts_setup_service,
             )
         return self._app_controller
 

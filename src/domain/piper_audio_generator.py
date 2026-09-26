@@ -557,6 +557,10 @@ class PiperAudioGenerator:
         except Exception:
             return 0.0
 
+    def _get_file_duration_fast(self, file_path: str) -> float:
+        """Alias for _get_mp3_duration — provides a uniform interface across all TTS generators."""
+        return self._get_mp3_duration(file_path)
+
     # ------------------------------------------------------------------
     # Cleanup helpers
     # ------------------------------------------------------------------

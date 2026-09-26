@@ -1,6 +1,6 @@
 # ReadAloud - High-Performance Text-to-Speech Application
 
-A high-performance Python & PyQt6 desktop application powered by Microsoft Edge TTS to convert text documents into high-quality MP3 audio. It features concurrent queue management with real-time monitoring (progress, ETA) and pause/resume controls, human-like voice synthesis with customizable speed and gender selection, and a multi-threaded architecture (up to 40 threads) with smart text chunking and structured logging.
+A high-performance Python & PyQt6 desktop application powered by Microsoft Edge TTS, local Piper Docker, and Coqui XTTS-v2 GPU neural synthesis to convert text documents into high-quality MP3 audio. It features concurrent queue management with real-time monitoring (progress, ETA) and pause/resume controls, human-like voice synthesis with customizable speed and gender selection, voice cloning via local GPU acceleration, and a multi-threaded architecture with smart text chunking and structured logging.
 
 <p align="center">
   <img src="docs/video_instructions/recording.gif" alt="ReadAloud Usage Demo" width="600" />
@@ -11,11 +11,12 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 - [ReadAloud - High-Performance Text-to-Speech Application](#readaloud---high-performance-text-to-speech-application)
   - [Table of Contents](#table-of-contents)
   - [1. 🛠 System Requirements](#1--system-requirements)
+  - [TTS Engine Backends \& Security](#tts-engine-backends--security)
   - [2. Installation \& Setup](#2-installation--setup)
     - [2.1. One-line Installation](#21-one-line-installation)
     - [2.2. Manual Installation (Alternative)](#22-manual-installation-alternative)
-    - [2.2.1. Installing System Dependencies](#221-installing-system-dependencies)
-    - [2.3. Uninstallation](#23-uninstallation)
+    - [2.3. Installing Coqui XTTS-v2 (Local GPU - Optional)](#23-installing-coqui-xtts-v2-local-gpu---optional)
+    - [2.4. Uninstallation](#24-uninstallation)
   - [3. Usage](#3-usage)
     - [3.1. Starting the Application](#31-starting-the-application)
     - [3.2. Running Tests](#32-running-tests)
@@ -23,7 +24,8 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 ## 1. 🛠 System Requirements
 
 - **Python**: 3.12 or higher
-- **FFmpeg**: Essential for audio stream assembly and speed adjustments.
+- **FFmpeg**: Essential for audio stream assembly, speed adjustments, and format conversion.
+- **NVIDIA GPU & CUDA 12.x** *(Optional)*: Required for local Coqui XTTS-v2 FP16 synthesis with voice cloning (>=4 GB VRAM recommended).
 - **Docker** *(Optional)*: Required only if using local neural TTS (Piper).
 - **libxcb-cursor**: Required for GUI cursor management.
 - **OS**: Linux (tested on Ubuntu / Debian / Arch).
@@ -32,7 +34,7 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 
 ## TTS Engine Backends & Security
 
-ReadAloud provides two TTS synthesis engines:
+ReadAloud provides three TTS synthesis engines:
 
 1. **Edge TTS (Cloud - Default)**:
    - Powered by Microsoft Edge Text-to-Speech API.
@@ -40,21 +42,25 @@ ReadAloud provides two TTS synthesis engines:
 
 2. **Piper TTS (Local Neural TTS - Optional)**:
    - High-quality neural synthesis running locally via Docker (`rhasspy/wyoming-piper`).
-   - **100% Free & Open-Source (MIT License)**: Free for personal and commercial use. No API keys, no subscriptions, no payments.
-   - **100% Private & Safe**: Performs synthesis entirely offline on your local network interface (`127.0.0.1:10200`). Zero data transmission to external servers. Your text and generated audio files never leave your computer.
-   - **Resource Management**: ReadAloud automatically starts the Docker container when synthesis begins and stops it when processing finishes to free RAM and CPU.
+   - **100% Free & Open-Source (MIT License)**: Free for personal and commercial use. No API keys, no subscriptions.
+   - **100% Private & Safe**: Performs synthesis entirely offline on your local network interface (`127.0.0.1:10200`).
+   - **Resource Management**: Automatically manages Docker container lifecycle to conserve RAM and CPU.
 
-### 🌐 Official Piper Resources & Voice Samples
+3. **Coqui XTTS-v2 (Local GPU Neural TTS & Voice Cloning - Optional)**:
+   - State-of-the-art neural TTS with instant voice cloning from a 5–30 second audio sample (`speaker.wav`).
+   - **Hardware Acceleration**: Executes locally on your NVIDIA GPU using PyTorch CUDA FP16.
+   - **100% Offline & Private**: Model weights run locally without external cloud calls.
+   - **Supported Languages**: English, Ukrainian, German, Russian (`en`, `uk`, `de`, `ru`).
 
-- 🎵 **Official Audio Samples & Demos**: [https://rhasspy.github.io/piper-samples/](https://rhasspy.github.io/piper-samples/)
-- 📦 **Official Voice Models Repository (HuggingFace)**: [https://huggingface.co/rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)
-- 💻 **Official Source Code (GitHub)**: [https://github.com/rhasspy/piper](https://github.com/rhasspy/piper)
+### 🌐 Official Resources & References
+
+- 🎵 **Piper Demos**: [https://rhasspy.github.io/piper-samples/](https://rhasspy.github.io/piper-samples/)
+- 📦 **Piper Voice Models**: [https://huggingface.co/rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)
+- 🤖 **Coqui XTTS-v2 Model Hub**: [https://huggingface.co/coqui/XTTS-v2](https://huggingface.co/coqui/XTTS-v2)
 
 ---
 
 ## 2. Installation & Setup
-
-You can install the application automatically in one command using the remote installation script (it installs dependencies, clones/updates the repository, sets up the virtual environment, and generates a desktop shortcut):
 
 ### 2.1. One-line Installation
 
@@ -64,53 +70,48 @@ wget -O install.sh https://raw.githubusercontent.com/Bohdan-Nerushev/ReadAloud/m
 bash install.sh
 ```
 
-*Note: The installation directory will be created at `./ReadAloud` relative to the directory where the command was executed. The desktop shortcut will be generated on your Desktop (e.g., `~/Desktop` or `~/Schreibtisch`). You may need to right-click the shortcut on your desktop and select **"Allow Launching"** to trust and enable it.*
-
 ### 2.2. Manual Installation (Alternative)
 
-### 2.2.1. Installing System Dependencies
-If you prefer to install manually:
 ```bash
 # Ubuntu/Debian
 sudo apt-get update && sudo apt-get install ffmpeg libxcb-cursor0
 
-# Fedora
-sudo dnf install ffmpeg libxcb-cursor
-
-# Arch Linux
-sudo pacman -S ffmpeg libxcb-cursor
+# Clone repository and set up environment
+git clone https://github.com/Bohdan-Nerushev/ReadAloud
+cd ReadAloud
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/Bohdan-Nerushev/ReadAloud
-   cd ReadAloud
-   ```
-
-2. **Set up virtual environment**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
 
 ---
 
-### 2.3. Uninstallation
+### 2.3. Installing Coqui XTTS-v2 (Local GPU - Optional)
 
-If you wish to uninstall ReadAloud, you can download and run the remote uninstallation script in one command:
+To enable local GPU synthesis and voice cloning with **XTTS-v2**:
 
-**Using wget:**
+1. **Install PyTorch & Coqui TTS dependencies**:
+   ```bash
+   source venv/bin/activate
+   ./scripts/install_xtts.sh
+   ```
+
+2. **Generate default speaker reference WAV files**:
+   ```bash
+   python scripts/generate_example_speakers.py
+   ```
+
+3. **Add custom speaker voices (Optional)**:
+   Place custom 10–20 second WAV files (24 kHz, Mono) under `src/resource/xtts_speakers/<language>/<gender>.wav` (e.g. `src/resource/xtts_speakers/uk/male.wav`).
+
+---
+
+### 2.4. Uninstallation
+
 ```bash
 wget -O uninstall.sh https://raw.githubusercontent.com/Bohdan-Nerushev/ReadAloud/master/scripts/uninstall.sh
 bash uninstall.sh
 ```
-
-This will automatically clean up the program files, remove the desktop shortcut, and unregister the application from your system menu.
 
 ---
 
@@ -124,9 +125,7 @@ This will automatically clean up the program files, remove the desktop shortcut,
 ---
 
 ### 3.2. Running Tests
-To execute the comprehensive test suite (unit, integration, concurrency, and UI tests):
+To execute the comprehensive test suite:
 ```bash
 ./scripts/run_tests.sh
 ```
-
-venv/bin/python -m pytest -v

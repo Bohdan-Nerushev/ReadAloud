@@ -21,9 +21,9 @@ class TextProcessor:
     ) -> None:
         """Initialize the TextProcessor."""
         # Compile regex patterns for performance
-        # Pattern to remove ", ', ***, and ======
+        # Pattern to remove ", ', and decorative dividers (___, ***, ---, ===, ###)
         self._sanitization_pattern = re.compile(
-            r'["\']|\*\*\*|======'
+            r'["\']|_{2,}|\*{2,}|={2,}|-{3,}|#{2,}'
         )
         # Pattern to replace newlines with four spaces
         self._newline_pattern = re.compile(

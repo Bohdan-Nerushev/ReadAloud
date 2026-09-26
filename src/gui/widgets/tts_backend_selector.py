@@ -1,16 +1,15 @@
 """
 TTS Backend Selector Widget.
 
-Provides a UI control for switching between Edge TTS (cloud) and Piper (local Docker).
+Provides a UI control for switching between Edge TTS (cloud), Piper (local Docker),
+and XTTS-v2 (local GPU neural TTS).
 Runs prerequisite checks in a background thread to avoid blocking the UI.
 
 Design:
   - Emits backendChanged(TtsBackend) when the user selects a different backend.
-  - Shows a status indicator (✅/⚠️/❌) next to the Piper option.
-  - Provides action buttons (Download Image, Download Model, Start Container)
-    that are enabled only when the corresponding action is needed.
-  - All blocking operations (docker checks, container start) run in a QThread
-    worker to keep the event loop responsive.
+  - Shows a status panel for Piper (Docker/model checks) and XTTS (CUDA/VRAM/model).
+  - All blocking operations run in QThread workers to keep the event loop responsive.
+  - When switching away from XTTS, the model is unloaded via XttsSetupService.
 """
 
 import logging
@@ -32,10 +31,16 @@ from PyQt6.QtWidgets import (
 
 from src.domain.models import TtsBackend
 from src.application.services.piper_setup_service import PiperPrerequisiteResult, PiperSetupService
+from src.application.services.xtts_setup_service import XttsSetupService
+from src.infrastructure.xtts_model_manager import XttsDiagnosticsResult
 from src.gui.styles import Styles
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Piper background workers (unchanged from original implementation)
+# ---------------------------------------------------------------------------
 
 class _PiperCheckWorker(QObject):
     """
@@ -86,9 +91,54 @@ class _PiperActionWorker(QObject):
             self.error.emit(str(exc))
 
 
+# ---------------------------------------------------------------------------
+# XTTS background workers
+# ---------------------------------------------------------------------------
+
+class _XttsCheckWorker(QObject):
+    """Runs XttsSetupService.check_prerequisites() in a QThread."""
+    finished = pyqtSignal(object)  # XttsDiagnosticsResult
+
+    def __init__(self, setup_service: XttsSetupService) -> None:
+        super().__init__()
+        self._service = setup_service
+
+    def run(self) -> None:
+        result = self._service.check_prerequisites()
+        self.finished.emit(result)
+
+
+class _XttsActionWorker(QObject):
+    """Runs XTTS model download or unload in a QThread."""
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    status = pyqtSignal(str)
+
+    def __init__(self, setup_service: XttsSetupService, action: str) -> None:
+        super().__init__()
+        self._service = setup_service
+        self._action = action
+        self._service.statusMessage.connect(self.status)
+        self._service.setupError.connect(self.error)
+
+    def run(self) -> None:
+        try:
+            if self._action == "download":
+                self._service.download_model()
+            elif self._action == "unload":
+                self._service.unload_model()
+            self.finished.emit()
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Main widget
+# ---------------------------------------------------------------------------
+
 class TtsBackendSelector(QWidget):
     """
-    Widget for selecting the TTS backend (Edge TTS or Piper).
+    Widget for selecting the TTS backend (Edge TTS, Piper, or XTTS-v2).
 
     Signals:
         backendChanged(TtsBackend): Emitted when the user selects a different backend.
@@ -98,18 +148,28 @@ class TtsBackendSelector(QWidget):
 
     def __init__(
             self,
-            setup_service: PiperSetupService,
+            piper_setup_service: PiperSetupService,
+            xtts_setup_service: XttsSetupService,
             parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self._setup_service = setup_service
+        self._piper_setup_service = piper_setup_service
+        self._xtts_setup_service = xtts_setup_service
         self._current_language = "ru"
         self._current_gender = "male"
-        self._last_check_result: Optional[PiperPrerequisiteResult] = None
-        self._check_thread: Optional[QThread] = None
-        self._action_thread: Optional[QThread] = None
-        self._check_worker: Optional[_PiperCheckWorker] = None
-        self._action_worker: Optional[_PiperActionWorker] = None
+
+        self._last_piper_result: Optional[PiperPrerequisiteResult] = None
+        self._last_xtts_result: Optional[XttsDiagnosticsResult] = None
+
+        self._piper_check_thread: Optional[QThread] = None
+        self._piper_action_thread: Optional[QThread] = None
+        self._piper_check_worker: Optional[_PiperCheckWorker] = None
+        self._piper_action_worker: Optional[_PiperActionWorker] = None
+
+        self._xtts_check_thread: Optional[QThread] = None
+        self._xtts_action_thread: Optional[QThread] = None
+        self._xtts_check_worker: Optional[_XttsCheckWorker] = None
+        self._xtts_action_worker: Optional[_XttsActionWorker] = None
 
         self._build_ui()
 
@@ -137,7 +197,7 @@ class TtsBackendSelector(QWidget):
 
         # --- Radio buttons ---
         radio_row = QHBoxLayout()
-        radio_row.setSpacing(25)
+        radio_row.setSpacing(20)
         self._button_group = QButtonGroup(self)
 
         self._edge_radio = QRadioButton("Edge TTS (Cloud)")
@@ -155,51 +215,78 @@ class TtsBackendSelector(QWidget):
         )
         self._button_group.addButton(self._piper_radio, 1)
 
+        self._xtts_radio = QRadioButton("XTTS-v2 (Local GPU)")
+        self._xtts_radio.setToolTip(
+            "Neural TTS via Coqui XTTS-v2. Highest quality, supports voice cloning. "
+            "Requires NVIDIA GPU with ≥4 GB VRAM and installed TTS package."
+        )
+        self._button_group.addButton(self._xtts_radio, 2)
+
         radio_row.addWidget(self._edge_radio)
         radio_row.addWidget(self._piper_radio)
+        radio_row.addWidget(self._xtts_radio)
         radio_row.addStretch()
         container_layout.addLayout(radio_row)
 
-        # --- Piper status panel (hidden when Edge TTS is selected) ---
-        self._piper_panel = QFrame()
-        self._piper_panel.setObjectName("PiperPanel")
-        self._piper_panel.setFrameShape(QFrame.Shape.StyledPanel)
-        self._piper_panel.setStyleSheet("""
-            QFrame#PiperPanel {
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
-                background-color: #f9f9f9;
-                margin-top: 6px;
-            }
-            QLabel {
-                border: none;
-                background-color: transparent;
-                font-size: 12px;
-                color: #333333;
-                padding: 2px 0px;
-            }
-            QPushButton {
-                background-color: #2196F3;
-                color: #ffffff;
-                border: none;
-                padding: 5px 12px;
-                font-size: 12px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0b7dda;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-        """)
-        piper_layout = QVBoxLayout(self._piper_panel)
-        piper_layout.setContentsMargins(10, 8, 10, 8)
-        piper_layout.setSpacing(4)
+        # --- Piper status panel ---
+        self._piper_panel = self._build_piper_panel()
+        self._piper_panel.setVisible(False)
+        container_layout.addWidget(self._piper_panel)
 
-        # Status labels
+        # --- XTTS status panel ---
+        self._xtts_panel = self._build_xtts_panel()
+        self._xtts_panel.setVisible(False)
+        container_layout.addWidget(self._xtts_panel)
+
+        main_layout.addWidget(self._container)
+        self.setMinimumHeight(65)
+
+        # --- Connect signals ---
+        self._edge_radio.toggled.connect(self._on_radio_toggled)
+        self._piper_radio.toggled.connect(self._on_radio_toggled)
+        self._xtts_radio.toggled.connect(self._on_radio_toggled)
+        self._btn_piper_recheck.clicked.connect(self._run_piper_check)
+        self._btn_xtts_recheck.clicked.connect(self._run_xtts_check)
+        self._btn_xtts_download.clicked.connect(lambda: self._run_xtts_action("download"))
+        self._btn_xtts_unload.clicked.connect(lambda: self._run_xtts_action("unload"))
+
+    _PANEL_STYLE = """
+        QFrame#StatusPanel {
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            background-color: #f9f9f9;
+            margin-top: 6px;
+        }
+        QLabel {
+            border: none;
+            background-color: transparent;
+            font-size: 12px;
+            color: #333333;
+            padding: 2px 0px;
+        }
+        QPushButton {
+            background-color: #2196F3;
+            color: #ffffff;
+            border: none;
+            padding: 5px 12px;
+            font-size: 12px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        QPushButton:hover { background-color: #0b7dda; }
+        QPushButton:disabled { background-color: #cccccc; color: #666666; }
+    """
+
+    def _build_piper_panel(self) -> QFrame:
+        """Builds the Piper prerequisite status panel."""
+        panel = QFrame()
+        panel.setObjectName("StatusPanel")
+        panel.setFrameShape(QFrame.Shape.StyledPanel)
+        panel.setStyleSheet(self._PANEL_STYLE)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+
         self._status_docker = QLabel("Docker: checking…")
         self._status_image = QLabel("Image: checking…")
         self._status_model = QLabel("Voice model: checking…")
@@ -208,28 +295,60 @@ class TtsBackendSelector(QWidget):
         for lbl in (self._status_docker, self._status_image,
                     self._status_model, self._status_container):
             lbl.setTextFormat(Qt.TextFormat.RichText)
-            piper_layout.addWidget(lbl)
+            layout.addWidget(lbl)
 
-        # Action buttons row (only Re-check is needed since pull, download & start are automatic)
         btn_row = QHBoxLayout()
-        self._btn_recheck = QPushButton("↻ Re-check")
-        self._btn_recheck.setToolTip("Run prerequisite checks again.")
-
+        self._btn_piper_recheck = QPushButton("↻ Re-check")
+        self._btn_piper_recheck.setToolTip("Run prerequisite checks again.")
         btn_row.addStretch()
-        btn_row.addWidget(self._btn_recheck)
-        piper_layout.addLayout(btn_row)
+        btn_row.addWidget(self._btn_piper_recheck)
+        layout.addLayout(btn_row)
 
-        self._piper_panel.setMinimumHeight(145)
-        self._piper_panel.setVisible(False)
-        container_layout.addWidget(self._piper_panel)
+        panel.setMinimumHeight(145)
+        return panel
 
-        main_layout.addWidget(self._container)
-        self.setMinimumHeight(65)
+    def _build_xtts_panel(self) -> QFrame:
+        """Builds the XTTS-v2 prerequisite status panel."""
+        panel = QFrame()
+        panel.setObjectName("StatusPanel")
+        panel.setFrameShape(QFrame.Shape.StyledPanel)
+        panel.setStyleSheet(self._PANEL_STYLE)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
 
-        # --- Connect signals ---
-        self._edge_radio.toggled.connect(self._on_radio_toggled)
-        self._piper_radio.toggled.connect(self._on_radio_toggled)
-        self._btn_recheck.clicked.connect(self._run_prerequisite_check)
+        self._xtts_status_package = QLabel("TTS package: checking…")
+        self._xtts_status_cuda = QLabel("CUDA: checking…")
+        self._xtts_status_vram = QLabel("VRAM: checking…")
+        self._xtts_status_model = QLabel("Model cache: checking…")
+        self._xtts_status_speakers = QLabel("")
+
+        for lbl in (self._xtts_status_package, self._xtts_status_cuda,
+                    self._xtts_status_vram, self._xtts_status_model,
+                    self._xtts_status_speakers):
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            layout.addWidget(lbl)
+
+        btn_row = QHBoxLayout()
+        self._btn_xtts_download = QPushButton("⬇ Download Model")
+        self._btn_xtts_download.setToolTip("Download XTTS-v2 model weights (~1.8 GB) from Coqui hub.")
+        self._btn_xtts_download.setEnabled(False)
+
+        self._btn_xtts_unload = QPushButton("🗑 Unload from VRAM")
+        self._btn_xtts_unload.setToolTip("Release XTTS model from GPU memory to free VRAM.")
+        self._btn_xtts_unload.setEnabled(False)
+
+        self._btn_xtts_recheck = QPushButton("↻ Re-check")
+        self._btn_xtts_recheck.setToolTip("Run XTTS prerequisite checks again.")
+
+        btn_row.addWidget(self._btn_xtts_download)
+        btn_row.addWidget(self._btn_xtts_unload)
+        btn_row.addStretch()
+        btn_row.addWidget(self._btn_xtts_recheck)
+        layout.addLayout(btn_row)
+
+        panel.setMinimumHeight(175)
+        return panel
 
     # ------------------------------------------------------------------
     # Public API
@@ -246,14 +365,18 @@ class TtsBackendSelector(QWidget):
         self._current_language = language
         self._current_gender = gender
         if changed and self._piper_radio.isChecked():
-            self._run_prerequisite_check()
+            self._run_piper_check()
 
     def selected_backend(self) -> TtsBackend:
         """Returns the currently selected TTS backend."""
-        return TtsBackend.PIPER if self._piper_radio.isChecked() else TtsBackend.EDGE_TTS
+        if self._piper_radio.isChecked():
+            return TtsBackend.PIPER
+        if self._xtts_radio.isChecked():
+            return TtsBackend.XTTS
+        return TtsBackend.EDGE_TTS
 
     # ------------------------------------------------------------------
-    # Slot handlers
+    # Radio toggle handler
     # ------------------------------------------------------------------
 
     def _on_radio_toggled(self, checked: bool) -> None:
@@ -261,80 +384,134 @@ class TtsBackendSelector(QWidget):
             return
         backend = self.selected_backend()
         is_piper = backend == TtsBackend.PIPER
+        is_xtts = backend == TtsBackend.XTTS
+
         self._piper_panel.setVisible(is_piper)
-        self.setMinimumHeight(225 if is_piper else 65)
+        self._xtts_panel.setVisible(is_xtts)
+
         if is_piper:
-            self._run_prerequisite_check()
+            self.setMinimumHeight(225)
+            self._run_piper_check()
+        elif is_xtts:
+            self.setMinimumHeight(255)
+            self._run_xtts_check()
+        else:
+            self.setMinimumHeight(65)
+
         self.backendChanged.emit(backend)
 
-    def _run_prerequisite_check(self) -> None:
+    # ------------------------------------------------------------------
+    # Piper check/action slots
+    # ------------------------------------------------------------------
+
+    def _run_piper_check(self) -> None:
         """Runs Docker/model checks in a background thread."""
-        self._set_checking_state()
-
-        if self._check_thread and self._check_thread.isRunning():
-            return  # Already checking
-
-        self._check_thread = QThread()
-        self._check_worker = _PiperCheckWorker(
-            self._setup_service, self._current_language, self._current_gender
-        )
-        self._check_worker.moveToThread(self._check_thread)
-        self._check_thread.started.connect(self._check_worker.run)
-        self._check_worker.finished.connect(self._on_check_finished)
-        self._check_worker.finished.connect(self._check_thread.quit)
-        self._check_thread.start()
-
-    def _on_check_finished(self, result: PiperPrerequisiteResult) -> None:
-        self._last_check_result = result
-        self._update_status_display(result)
-        self._update_button_states(result)
-
-    def _run_action(self, action: str) -> None:
-        """Runs start/stop/pull in a background thread."""
-        if self._action_thread and self._action_thread.isRunning():
+        self._set_piper_checking_state()
+        if self._piper_check_thread and self._piper_check_thread.isRunning():
             return
 
-        self._set_buttons_busy(True)
-        self._action_thread = QThread()
-        self._action_worker = _PiperActionWorker(
-            self._setup_service, action, self._current_language, self._current_gender
+        self._piper_check_thread = QThread()
+        self._piper_check_worker = _PiperCheckWorker(
+            self._piper_setup_service, self._current_language, self._current_gender
         )
-        self._action_worker.moveToThread(self._action_thread)
-        self._action_thread.started.connect(self._action_worker.run)
-        self._action_worker.finished.connect(self._on_action_finished)
-        self._action_worker.error.connect(self._on_action_error)
-        self._action_worker.status.connect(self._status_container.setText)
-        self._action_worker.finished.connect(self._action_thread.quit)
-        self._action_thread.start()
+        self._piper_check_worker.moveToThread(self._piper_check_thread)
+        self._piper_check_thread.started.connect(self._piper_check_worker.run)
+        self._piper_check_worker.finished.connect(self._on_piper_check_finished)
+        self._piper_check_worker.finished.connect(self._piper_check_thread.quit)
+        self._piper_check_thread.start()
 
-    def _on_action_finished(self) -> None:
-        self._set_buttons_busy(False)
-        self._run_prerequisite_check()
+    def _on_piper_check_finished(self, result: PiperPrerequisiteResult) -> None:
+        self._last_piper_result = result
+        self._update_piper_status_display(result)
 
-    def _on_action_error(self, message: str) -> None:
-        self._set_buttons_busy(False)
+    def _run_piper_action(self, action: str) -> None:
+        if self._piper_action_thread and self._piper_action_thread.isRunning():
+            return
+        self._btn_piper_recheck.setEnabled(False)
+        self._piper_action_thread = QThread()
+        self._piper_action_worker = _PiperActionWorker(
+            self._piper_setup_service, action, self._current_language, self._current_gender
+        )
+        self._piper_action_worker.moveToThread(self._piper_action_thread)
+        self._piper_action_thread.started.connect(self._piper_action_worker.run)
+        self._piper_action_worker.finished.connect(self._on_piper_action_finished)
+        self._piper_action_worker.error.connect(self._on_piper_action_error)
+        self._piper_action_worker.status.connect(self._status_container.setText)
+        self._piper_action_worker.finished.connect(self._piper_action_thread.quit)
+        self._piper_action_thread.start()
+
+    def _on_piper_action_finished(self) -> None:
+        self._btn_piper_recheck.setEnabled(True)
+        self._run_piper_check()
+
+    def _on_piper_action_error(self, message: str) -> None:
+        self._btn_piper_recheck.setEnabled(True)
         QMessageBox.critical(self, "Piper Error", message)
-        self._run_prerequisite_check()
+        self._run_piper_check()
 
     # ------------------------------------------------------------------
-    # UI update helpers
+    # XTTS check/action slots
     # ------------------------------------------------------------------
 
-    def _set_checking_state(self) -> None:
+    def _run_xtts_check(self) -> None:
+        """Runs XTTS prerequisite checks in a background thread."""
+        self._set_xtts_checking_state()
+        if self._xtts_check_thread and self._xtts_check_thread.isRunning():
+            return
+
+        self._xtts_check_thread = QThread()
+        self._xtts_check_worker = _XttsCheckWorker(self._xtts_setup_service)
+        self._xtts_check_worker.moveToThread(self._xtts_check_thread)
+        self._xtts_check_thread.started.connect(self._xtts_check_worker.run)
+        self._xtts_check_worker.finished.connect(self._on_xtts_check_finished)
+        self._xtts_check_worker.finished.connect(self._xtts_check_thread.quit)
+        self._xtts_check_thread.start()
+
+    def _on_xtts_check_finished(self, result: XttsDiagnosticsResult) -> None:
+        self._last_xtts_result = result
+        self._update_xtts_status_display(result)
+        self._update_xtts_button_states(result)
+
+    def _run_xtts_action(self, action: str) -> None:
+        if self._xtts_action_thread and self._xtts_action_thread.isRunning():
+            return
+        self._set_xtts_buttons_busy(True)
+        self._xtts_action_thread = QThread()
+        self._xtts_action_worker = _XttsActionWorker(self._xtts_setup_service, action)
+        self._xtts_action_worker.moveToThread(self._xtts_action_thread)
+        self._xtts_action_thread.started.connect(self._xtts_action_worker.run)
+        self._xtts_action_worker.finished.connect(self._on_xtts_action_finished)
+        self._xtts_action_worker.error.connect(self._on_xtts_action_error)
+        self._xtts_action_worker.status.connect(self._xtts_status_model.setText)
+        self._xtts_action_worker.finished.connect(self._xtts_action_thread.quit)
+        self._xtts_action_thread.start()
+
+    def _on_xtts_action_finished(self) -> None:
+        self._set_xtts_buttons_busy(False)
+        self._run_xtts_check()
+
+    def _on_xtts_action_error(self, message: str) -> None:
+        self._set_xtts_buttons_busy(False)
+        QMessageBox.critical(self, "XTTS Error", message)
+        self._run_xtts_check()
+
+    # ------------------------------------------------------------------
+    # UI update helpers — Piper
+    # ------------------------------------------------------------------
+
+    def _set_piper_checking_state(self) -> None:
         checking_text = "<span style='color: gray'>⏳ checking…</span>"
         self._status_docker.setText(f"Docker: {checking_text}")
         self._status_image.setText(f"Image: {checking_text}")
         self._status_model.setText(f"Voice model: {checking_text}")
         self._status_container.setText("")
 
-    def _update_status_display(self, result: PiperPrerequisiteResult) -> None:
+    def _update_piper_status_display(self, result: PiperPrerequisiteResult) -> None:
         ok = "<span style='color: green'>✅</span>"
         fail = "<span style='color: red'>❌</span>"
         warn = "<span style='color: orange'>⚠️</span>"
 
-        self._status_docker.setText(
-            f"Docker: {ok if result.docker_available else fail}"
-        )
+        self._status_docker.setText(f"Docker: {ok if result.docker_available else fail}")
         self._status_image.setText(
             f"Image (rhasspy/wyoming-piper): {ok if result.image_available else fail}"
         )
@@ -351,15 +528,74 @@ class TtsBackendSelector(QWidget):
                 f"Container: {ok} running (port {PIPER_DEFAULT_PORT})"
             )
         else:
-            self._status_container.setText(
-                f"Container: {fail} not running"
+            self._status_container.setText(f"Container: {fail} not running")
+
+        self._btn_piper_recheck.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # UI update helpers — XTTS
+    # ------------------------------------------------------------------
+
+    def _set_xtts_checking_state(self) -> None:
+        checking = "<span style='color: gray'>⏳ checking…</span>"
+        self._xtts_status_package.setText(f"TTS package: {checking}")
+        self._xtts_status_cuda.setText(f"CUDA: {checking}")
+        self._xtts_status_vram.setText(f"VRAM: {checking}")
+        self._xtts_status_model.setText(f"Model cache: {checking}")
+        self._xtts_status_speakers.setText("")
+
+    def _update_xtts_status_display(self, result: XttsDiagnosticsResult) -> None:
+        ok = "<span style='color: green'>✅</span>"
+        fail = "<span style='color: red'>❌</span>"
+        warn = "<span style='color: orange'>⚠️</span>"
+
+        self._xtts_status_package.setText(
+            f"TTS package: {ok if result.tts_package_installed else fail}"
+        )
+        self._xtts_status_cuda.setText(
+            f"CUDA: {ok if result.cuda_available else fail}"
+        )
+
+        if result.vram_total_gb > 0:
+            vram_icon = ok if result.vram_sufficient else warn
+            vram_text = (
+                f"VRAM: {vram_icon} {result.vram_free_gb:.1f} GB free "
+                f"/ {result.vram_total_gb:.1f} GB total"
+            )
+        else:
+            vram_text = f"VRAM: {fail} not available"
+        self._xtts_status_vram.setText(vram_text)
+
+        self._xtts_status_model.setText(
+            f"Model cache (XTTS-v2): {ok if result.model_cached else fail}"
+        )
+
+        if result.missing_speaker_files:
+            count = len(result.missing_speaker_files)
+            self._xtts_status_speakers.setText(
+                f"Speaker WAVs: {warn} {count} file(s) missing — "
+                f"see src/resource/xtts_speakers/README.md"
+            )
+        else:
+            self._xtts_status_speakers.setText(
+                f"Speaker WAVs: {ok} all present"
             )
 
-    def _update_button_states(self, result: PiperPrerequisiteResult) -> None:
-        self._btn_recheck.setEnabled(True)
+    def _update_xtts_button_states(self, result: XttsDiagnosticsResult) -> None:
+        self._btn_xtts_recheck.setEnabled(True)
+        # Show download button only when TTS package is installed but model not yet cached.
+        self._btn_xtts_download.setEnabled(
+            result.tts_package_installed and not result.model_cached
+        )
+        # Unload button only useful when model is loaded (we can't easily detect this
+        # from diagnostics alone, so enable whenever XTTS is the selected backend and
+        # prerequisites pass, as a convenience).
+        self._btn_xtts_unload.setEnabled(result.is_ready)
 
-    def _set_buttons_busy(self, busy: bool) -> None:
-        self._btn_recheck.setEnabled(not busy)
+    def _set_xtts_buttons_busy(self, busy: bool) -> None:
+        self._btn_xtts_download.setEnabled(not busy)
+        self._btn_xtts_unload.setEnabled(not busy)
+        self._btn_xtts_recheck.setEnabled(not busy)
 
 
 # Import here to avoid circular import at module level

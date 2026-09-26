@@ -1,0 +1,27 @@
+# XTTS-v2 backend dependencies.
+# Install these SEPARATELY from the main requirements.txt:
+#
+#   ./scripts/install_xtts.sh
+#
+# or manually:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r xtts_requirements.txt
+#
+# Requirements:
+#   - NVIDIA GPU with >=4 GB VRAM
+#   - CUDA 12.x drivers installed on the host
+#   - ffmpeg in PATH (already required by pydub)
+
+# Coqui TTS (fork supporting Python 3.12, imports as TTS)
+coqui-tts>=0.24.0
+
+# PyTorch with CUDA 12.1 support (installed via install_xtts.sh wheel index)
+# Listed here for documentation; actual install uses --index-url
+torch>=2.2.0
+torchaudio>=2.2.0
+
+# Audio I/O for writing 24kHz WAV output from XTTS numpy arrays
+soundfile>=0.12.1
+
+# Pin transformers <4.45.0 to avoid breaking change with isin_mps_friendly
+transformers>=4.36.0,<4.45.0

@@ -337,3 +337,11 @@ class TestLoopLifecycle:
         gen.ensure_loop_running()
         assert gen._loop.is_running()
         gen.close()
+
+    def test_get_file_duration_fast_alias(self):
+        gen = PiperAudioGenerator()
+        with patch.object(gen, "_get_mp3_duration", return_value=5.0) as mock_get:
+            res = gen._get_file_duration_fast("/tmp/test.mp3")
+            assert res == 5.0
+            mock_get.assert_called_once_with("/tmp/test.mp3")
+        gen.close()

@@ -33,16 +33,18 @@ class MainWindow(QMainWindow):
     def __init__(
             self,
             piper_setup_service=None,
+            xtts_setup_service=None,
     ) -> None:
         """
         Initialize the MainWindow.
 
         Args:
             piper_setup_service: Optional PiperSetupService injected by the coordinator.
-                                 When provided, enables the Piper TTS backend selector.
+            xtts_setup_service: Optional XttsSetupService injected by the coordinator.
         """
         super().__init__()
         self._piper_setup_service = piper_setup_service
+        self._xtts_setup_service = xtts_setup_service
         self._setup_ui()
         self._connect_signals()
     
@@ -130,12 +132,12 @@ class MainWindow(QMainWindow):
         
         card_layout.addLayout(settings_layout)
 
-        # TTS Backend Selector (Piper / Edge TTS switcher)
-        # Only shown when PiperSetupService is available (always in normal usage).
+        # TTS Backend Selector (Edge TTS / Piper / XTTS-v2 switcher)
         self.tts_backend_selector: Optional[TtsBackendSelector] = None
-        if self._piper_setup_service is not None:
+        if self._piper_setup_service is not None and self._xtts_setup_service is not None:
             self.tts_backend_selector = TtsBackendSelector(
-                setup_service=self._piper_setup_service,
+                piper_setup_service=self._piper_setup_service,
+                xtts_setup_service=self._xtts_setup_service,
                 parent=config_card,
             )
             card_layout.addWidget(self.tts_backend_selector)

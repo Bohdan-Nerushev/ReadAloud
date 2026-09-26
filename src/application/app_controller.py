@@ -26,6 +26,7 @@ from src.application.services.generation_service import GenerationService
 from src.application.services.assembly_service import AssemblyService
 from src.application.services.persistence_service import PersistenceService
 from src.application.services.piper_setup_service import PiperSetupService
+from src.application.services.xtts_setup_service import XttsSetupService
 from src.infrastructure.logging_config import set_correlation_id
 
 
@@ -192,6 +193,7 @@ class ApplicationController(QObject):
             persistence_service: PersistenceService,
             audio_generator_resolver=None,
             piper_setup_service: Optional[PiperSetupService] = None,
+            xtts_setup_service: Optional[XttsSetupService] = None,
     ) -> None:
         """Initialize the ApplicationController."""
         super().__init__()
@@ -206,6 +208,7 @@ class ApplicationController(QObject):
         self._assembly_service = assembly_service
         self._persistence_service = persistence_service
         self._piper_setup_service = piper_setup_service
+        self._xtts_setup_service = xtts_setup_service
 
         # Callable (backend: TtsBackend) -> TtsGeneratorProtocol
         # Allows dynamic switching of the TTS generator per task.
@@ -419,6 +422,22 @@ class ApplicationController(QObject):
                 logging.error("Failed to auto-start Piper container for task %s: %s", task.id, e, exc_info=True)
                 self._handle_task_failure(f"Failed to start Piper container: {e}")
                 return
+
+        # Check prerequisites & log info if XTTS backend
+        if task.config.tts_backend == TtsBackend.XTTS:
+            logging.info(
+                "[XTTS] Starting generation with backend XTTS for task %s (lang=%s, voice=%s)",
+                task.id, task.config.language, getattr(task.config, 'voice_name', None),
+            )
+            if self._xtts_setup_service is not None:
+                try:
+                    prereq = self._xtts_setup_service.check_prerequisites()
+                    logging.info(
+                        "[XTTS] Prerequisites check for task %s: tts_pkg=%s, cuda=%s, vram_sufficient=%s, model_cached=%s, free_vram=%.2fGB, is_ready=%s",
+                        task.id, prereq.tts_package_installed, prereq.cuda_available, prereq.vram_sufficient, prereq.model_cached, prereq.vram_free_gb, prereq.is_ready,
+                    )
+                except Exception as exc:
+                    logging.warning("[XTTS] Prerequisites check warning for task %s: %s", task.id, exc)
 
         self._generation_service.start_generation(
             task,
@@ -793,6 +812,7 @@ class ApplicationController(QObject):
             
         self._save_state(force=True)
         self._stop_piper_on_app_shutdown()
+        self._stop_xtts_on_app_shutdown()
 
     def _stop_piper_on_app_shutdown(self) -> None:
         """Stops Piper Docker container on application exit to release system resources."""
@@ -803,6 +823,16 @@ class ApplicationController(QObject):
             self._piper_setup_service.stop_container()
         except Exception as exc:
             logging.warning("Failed to stop Piper container on shutdown: %s", exc)
+
+    def _stop_xtts_on_app_shutdown(self) -> None:
+        """Unloads XTTS model from VRAM on application exit to release GPU memory."""
+        if self._xtts_setup_service is None:
+            return
+        try:
+            logging.info("Application shutting down: unloading XTTS model from VRAM...")
+            self._xtts_setup_service.unload_model()
+        except Exception as exc:
+            logging.warning("Failed to unload XTTS model on shutdown: %s", exc)
 
     def _auto_stop_piper_if_idle(self) -> None:
         """Auto-stops Piper container if no pending or processing tasks remain."""

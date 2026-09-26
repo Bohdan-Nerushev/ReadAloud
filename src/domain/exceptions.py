@@ -118,3 +118,52 @@ class PiperConnectionException(TransientGenerationException):
     """
     pass
 
+
+class XttsNotAvailableException(ReadAloudException):
+    """
+    Raised when the XTTS-v2 backend cannot be initialised.
+
+    Examples:
+        - TTS package not installed (ImportError on 'from TTS.api import TTS')
+        - CUDA driver not found or torch.cuda.is_available() returns False
+        - PyTorch version incompatible with the installed CUDA toolkit
+    """
+    pass
+
+
+class XttsModelNotLoadedException(ReadAloudException):
+    """
+    Raised when synthesis is attempted but the XTTS model is not loaded.
+
+    This is a programming error — callers must ensure the model is loaded
+    before calling synthesis methods. It is NOT retryable.
+    """
+    pass
+
+
+class XttsOutOfMemoryException(FatalGenerationException):
+    """
+    Raised when a CUDA Out-Of-Memory error occurs during XTTS synthesis.
+
+    Recovery strategy: the caller should call unload_model() to release VRAM,
+    then inform the user that GPU memory is insufficient.
+
+    This is fatal for the current synthesis attempt — retrying will not help
+    until VRAM is freed.
+    """
+    pass
+
+
+class XttsReferenceAudioMissingException(FatalGenerationException):
+    """
+    Raised when the speaker reference WAV file for voice cloning is missing.
+
+    XTTS-v2 requires a reference audio sample to clone the speaker's voice.
+    Each language/gender combination maps to a file in the speakers directory.
+
+    Examples:
+        - data/xtts_speakers/uk/male.wav not found
+        - data/xtts_speakers/en/female.wav is empty (0 bytes)
+    """
+    pass
+
