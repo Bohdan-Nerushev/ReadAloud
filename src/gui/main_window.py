@@ -195,15 +195,14 @@ class MainWindow(QMainWindow):
 
     def _on_backend_changed(self, backend: TtsBackend) -> None:
         """
-        Shows or hides Voice Gender, Playback Speed, and Number of Threads
-        depending on the selected TTS backend.
+        Adjusts visibility of controls depending on the selected TTS backend.
         
-        When Piper (Local Docker) is selected, these controls disappear completely
-        (setVisible(False)) and reappear (setVisible(True)) when switching back to Edge TTS.
+        - Voice Gender & Speed: Available for Edge TTS, Piper, and XTTS-v2.
+        - Number of Threads: Only applicable to Edge TTS (concurrent API calls).
         """
-        is_edge = backend == TtsBackend.EDGE_TTS
-        self.gender_selector.setVisible(is_edge)
-        self.speed_selector.setVisible(is_edge)
+        is_edge = (backend == TtsBackend.EDGE_TTS)
+        self.gender_selector.setVisible(True)
+        self.speed_selector.setVisible(True)
         self.thread_selector.setVisible(is_edge)
     
     def set_inputs_enabled(

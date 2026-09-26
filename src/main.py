@@ -275,6 +275,22 @@ def main() -> None:
 
         controller.restore_state()
 
+        import atexit
+        import signal
+
+        atexit.register(controller.shutdown)
+
+        def _signal_handler(sig, frame):
+            logging.info("Signal %s received, shutting down gracefully...", sig)
+            controller.shutdown()
+            sys.exit(0)
+
+        try:
+            signal.signal(signal.SIGINT, _signal_handler)
+            signal.signal(signal.SIGTERM, _signal_handler)
+        except (ValueError, AttributeError):
+            pass
+
         app.aboutToQuit.connect(controller.shutdown)
         window.show()
 
