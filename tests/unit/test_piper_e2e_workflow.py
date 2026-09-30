@@ -17,6 +17,7 @@ from src.domain.models import ProjectConfig, TtsBackend, TaskStatus, AudioChunk
 from src.domain.piper_audio_generator import PiperAudioGenerator
 from src.application.services.piper_setup_service import PiperPrerequisiteResult, PiperSetupService
 from src.infrastructure.ioc import Container
+from tests.unit._lifecycle_helpers import use_inline_runners
 
 
 @pytest.fixture(scope="module")
@@ -94,6 +95,7 @@ class TestPiperE2EWorkflow:
         container._piper_audio_generator = mock_piper_generator
 
         controller = container.app_controller
+        use_inline_runners(controller)
 
         with patch.object(controller._assembly_service, "assemble_final") as mock_assemble:
             # Submit task
@@ -119,7 +121,7 @@ class TestPiperE2EWorkflow:
             assert controller._generation_service._audio_generator == mock_piper_generator
 
             # Verify Piper container auto-start was called
-            mock_setup_service.start_container.assert_called_with("ru", "male")
+            mock_setup_service.ensure_ready.assert_called_with("ru", "male")
 
     def test_piper_auto_stop_on_shutdown(self, qapp, tmp_path: Path):
         """Verifies that Piper container is automatically stopped on app shutdown."""

@@ -20,16 +20,17 @@ class TextProcessor:
             self
     ) -> None:
         """Initialize the TextProcessor."""
-        # Compile regex patterns for performance
-        # Pattern to remove ", ', and decorative dividers (___, ***, ---, ===, ###)
-        self._sanitization_pattern = re.compile(
-            r'["\']|_{2,}|\*{2,}|={2,}|-{3,}|#{2,}'
+        # Decorative dividers (___, ***, ===, ---, ###) carry no speech.
+        self._divider_pattern = re.compile(r'_{2,}|\*{2,}|={2,}|-{3,}|#{2,}')
+        # An apostrophe between two letters is part of the word (don't, l'amour, п'ять).
+        self._word_apostrophe = re.compile(
+            r"(?<=[^\W\d_])['\u2019\u02bc\u2018](?=[^\W\d_])"
         )
-        # Pattern to replace newlines with four spaces
-        self._newline_pattern = re.compile(
-            r'\n'
-        )
-    
+        # Every other quotation mark is decoration and is dropped.
+        self._quote_pattern = re.compile(r'["\u201c\u201d\u201e\u00ab\u00bb\u2018\u2019\']')
+        self._many_newlines = re.compile(r'\n{3,}')
+        self._line_edge_spaces = re.compile(r'[ \t]+(?=\n)')
+
     def process_text(
             self,
             raw_text: str
@@ -38,12 +39,13 @@ class TextProcessor:
         Processes raw text by removing or replacing dangerous characters.
         
         Transformations applied:
-        - Double quotes (") replaced with empty string
-        - Single quotes (') replaced with empty string
-        - Three consecutive asterisks (***) replaced with empty string
-        - Six consecutive equals signs (======) replaced with empty string
-        - Newline characters replaced with four spaces
-        
+        - Quotation marks (" “ ” „ « » and single quotes) are removed, but an
+          apostrophe inside a word is kept (don't, l'amour, п'ять) because
+          removing it changes the pronunciation
+        - Decorative dividers (***, ===, ---, ___, ###) are removed
+        - Line breaks are preserved as paragraph/pause information
+          (CRLF normalised, runs of 3+ newlines collapsed to a blank line)
+
         Args:
             raw_text: The raw input text to process
             
@@ -58,16 +60,14 @@ class TextProcessor:
                 "Input text cannot be None"
             )
         
-        # Single-pass sanitization using compiled regex
-        processed = self._sanitization_pattern.sub(
-            '',
-            raw_text
-        )
-        
-        # Replace newlines
-        processed = self._newline_pattern.sub(
-            '    ',
-            processed
-        )
-        
-        return processed
+        text = raw_text.replace('\r\n', '\n').replace('\r', '\n')
+
+        # Protect in-word apostrophes, drop other quotes, then restore them.
+        marker = '\x00'
+        text = self._word_apostrophe.sub(marker, text)
+        text = self._quote_pattern.sub('', text)
+        text = text.replace(marker, "'")
+
+        text = self._divider_pattern.sub('', text)
+        text = self._line_edge_spaces.sub('', text)
+        return self._many_newlines.sub('\n\n', text)

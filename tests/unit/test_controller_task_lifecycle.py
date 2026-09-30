@@ -324,7 +324,9 @@ class TestCancelCurrentTask(LifecycleTestCase):
         task = self.add("A")
         self.generation.stop.reset_mock()
         self.controller.cancel_task(str(task.id))
-        self.generation.stop.assert_called_with(wait=True)
+        self.generation.stop.assert_called_with()
+        # the GUI thread must never block waiting for a running batch
+        self.assertNotIn(True, [c.kwargs.get("wait") for c in self.generation.stop.call_args_list])
         self.assembly.stop.assert_called()
 
     def test_persisted_state_contains_only_surviving_tasks(self):

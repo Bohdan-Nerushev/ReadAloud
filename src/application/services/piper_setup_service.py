@@ -23,7 +23,11 @@ from typing import List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from src.domain.exceptions import PiperNotAvailableException, PiperModelMissingException
+from src.domain.exceptions import (
+    BackendNotReadyException,
+    PiperModelMissingException,
+    PiperNotAvailableException,
+)
 from src.infrastructure.docker_manager import DockerManager, PIPER_DEFAULT_PORT
 from src.infrastructure.piper_model_manager import PiperModelManager
 
@@ -184,21 +188,63 @@ class PiperSetupService(QObject):
         Automatically pulls Docker image or downloads voice model if missing.
 
         Must be called from a background thread (blocks until container is up).
-        Emits ``containerStarted`` on success or ``setupError`` on failure.
-
-        Args:
-            language: ISO language code.
-            gender:   "male" or "female".
+        Emits ``containerStarted`` on success or ``setupError`` on failure; it does
+        not raise. Callers that must react to a failure use ``ensure_ready``.
         """
         try:
-            # 1. Auto-pull Docker image if missing
-            if not self._docker_manager.is_piper_image_available():
-                self.pull_image()
+            self._start_container_or_raise(language, gender)
+            self.containerStarted.emit()
+        except BackendNotReadyException as exc:
+            self.setupError.emit(exc.message)
+        except Exception as exc:
+            logger.error("Unexpected error starting Piper container: %s", exc, exc_info=True)
+            self.setupError.emit(f"Unexpected error: {exc}")
 
-            # 2. Auto-download voice model files if missing
+    def ensure_ready(self, language: str, gender: str) -> None:
+        """
+        Fail-fast preparation used before a Piper task: checks prerequisites and
+        starts the container when needed.
+
+        Must be called from a background thread.
+
+        Raises:
+            BackendNotReadyException: with the real reason (Docker missing, port taken,
+                unsupported language, image/model download failed, container not up).
+        """
+        if not self._model_manager.is_language_supported(language):
+            raise BackendNotReadyException(
+                f"Language '{language}' is not supported by Piper. "
+                "Switch to Edge TTS or choose a supported language."
+            )
+        prereq = self.check_prerequisites(language, gender)
+        if prereq.container_running:
+            return
+        if not prereq.docker_available:
+            raise BackendNotReadyException(
+                prereq.error_message
+                or "Docker is not available. Ensure Docker Engine is installed and running."
+            )
+        if prereq.port_conflict:
+            raise BackendNotReadyException(
+                prereq.error_message or f"Port {self._piper_port} is occupied by another process."
+            )
+        try:
+            self._start_container_or_raise(language, gender)
+        except BackendNotReadyException:
+            raise
+        except Exception as exc:
+            raise BackendNotReadyException(f"Failed to start Piper container: {exc}", cause=exc) from exc
+        self.containerStarted.emit()
+
+    def _start_container_or_raise(self, language: str, gender: str) -> None:
+        """Pull image / download voice / compose up / wait for the port; raises on any failure."""
+        try:
+            if not self._docker_manager.is_piper_image_available():
+                self._pull_image_or_raise()
+
             voice = self._model_manager.get_voice_for_language(language, gender)
             if not self._model_manager.is_model_present(voice):
-                self.download_model(language, gender)
+                self._download_model_or_raise(language, gender)
 
             models_dir = str(self._model_manager.models_dir)
 
@@ -212,25 +258,20 @@ class PiperSetupService(QObject):
             }
             self._docker_manager.start_piper_compose(env=env)
 
-            # Poll until the port is open (up to 30 seconds)
             self._wait_for_port_open(timeout=30.0, check_interval=1.0)
-
             logger.info("Piper container is ready on port %d.", self._piper_port)
-            self.containerStarted.emit()
-
+        except BackendNotReadyException:
+            raise
         except PiperNotAvailableException as exc:
             logger.error("Failed to start Piper container: %s", exc)
-            self.setupError.emit(str(exc))
-        except TimeoutError:
+            raise BackendNotReadyException(exc.message, cause=exc) from exc
+        except TimeoutError as exc:
             msg = (
                 f"Piper container did not become available on port {self._piper_port} "
                 "within 30 seconds. Check container logs for details."
             )
             logger.error(msg)
-            self.setupError.emit(msg)
-        except Exception as exc:
-            logger.error("Unexpected error starting Piper container: %s", exc, exc_info=True)
-            self.setupError.emit(f"Unexpected error: {exc}")
+            raise BackendNotReadyException(msg, cause=exc) from exc
 
     def stop_container(self) -> None:
         """
@@ -257,14 +298,9 @@ class PiperSetupService(QObject):
         Emits ``statusMessage`` during progress and ``setupError`` on failure.
         """
         try:
-            self.statusMessage.emit(
-                "Downloading rhasspy/wyoming-piper image (~1 GB) ... this may take several minutes."
-            )
-            self._docker_manager.pull_piper_image()
-            self.statusMessage.emit("Image downloaded successfully.")
-        except PiperNotAvailableException as exc:
-            logger.error("Image pull failed: %s", exc)
-            self.setupError.emit(str(exc))
+            self._pull_image_or_raise()
+        except BackendNotReadyException as exc:
+            self.setupError.emit(exc.message)
 
     def download_model(self, language: str, gender: str) -> None:
         """
@@ -273,6 +309,23 @@ class PiperSetupService(QObject):
         Must be called from a background thread.
         Emits ``statusMessage`` during progress and ``setupError`` on failure.
         """
+        try:
+            self._download_model_or_raise(language, gender)
+        except BackendNotReadyException as exc:
+            self.setupError.emit(exc.message)
+
+    def _pull_image_or_raise(self) -> None:
+        try:
+            self.statusMessage.emit(
+                "Downloading rhasspy/wyoming-piper image (~1 GB) ... this may take several minutes."
+            )
+            self._docker_manager.pull_piper_image()
+            self.statusMessage.emit("Image downloaded successfully.")
+        except PiperNotAvailableException as exc:
+            logger.error("Image pull failed: %s", exc)
+            raise BackendNotReadyException(exc.message, cause=exc) from exc
+
+    def _download_model_or_raise(self, language: str, gender: str) -> None:
         try:
             voice = self._model_manager.get_voice_for_language(language, gender)
             self.statusMessage.emit(f"Downloading voice model '{voice}' from Hugging Face...")
@@ -283,7 +336,9 @@ class PiperSetupService(QObject):
             self.statusMessage.emit(f"Voice model '{voice}' downloaded successfully.")
         except Exception as exc:
             logger.error("Failed to download voice model: %s", exc, exc_info=True)
-            self.setupError.emit(f"Could not download voice model: {exc}")
+            raise BackendNotReadyException(
+                f"Could not download voice model: {exc}", cause=exc
+            ) from exc
 
     # ------------------------------------------------------------------
     # Internal helpers

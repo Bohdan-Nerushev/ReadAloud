@@ -30,7 +30,7 @@ class TestStabilityFixes(unittest.TestCase):
         self.assertTrue(_is_transient_error(exc))
 
     def test_controller_shutdown_and_stop_waits_for_threads(self):
-        """Verifies that shutdown and stop_generation call GenerationService.stop with wait=True."""
+        """Verifies shutdown waits for worker threads while stop_generation (GUI path) does not block."""
         queue_service = MagicMock()
         text_processor = MagicMock()
         text_chunker = MagicMock()
@@ -57,10 +57,10 @@ class TestStabilityFixes(unittest.TestCase):
         controller.shutdown()
         generation_service.stop.assert_called_with(wait=True)
 
-        # Reset mock and test stop_generation
+        # stop_generation runs on the GUI thread: it must not block on running batches
         generation_service.stop.reset_mock()
         controller.stop_generation()
-        generation_service.stop.assert_called_with(wait=True)
+        generation_service.stop.assert_called_with()
 
     def test_progress_tracker_reset_completed_count(self):
         """Verifies ProgressTracker.reset_completed_count updates progress counters correctly."""

@@ -12,7 +12,7 @@ class TestTextProcessor(unittest.TestCase):
         self.processor = TextProcessor()
 
     def test_process_text_removes_quotes(self):
-        """test_process_text_removes_quotes: Verifies that single (') and double (") quotes are removed."""
+        """test_process_text_removes_quotes: Verifies that quotation marks (not in-word apostrophes) are removed."""
         input_text = 'Text with "double" and \'single\' quotes.'
         expected = "Text with double and single quotes."
         self.assertEqual(self.processor.process_text(input_text), expected)
@@ -24,9 +24,9 @@ class TestTextProcessor(unittest.TestCase):
         self.assertEqual(self.processor.process_text(input_text), expected)
 
     def test_process_text_replaces_newlines(self):
-        """test_process_text_replaces_newlines: Verifies that newline characters are replaced with 4 spaces."""
+        """test_process_text_replaces_newlines: Verifies that line breaks are preserved (they carry pauses)."""
         input_text = "Line 1\nLine 2"
-        expected = "Line 1    Line 2"
+        expected = "Line 1\nLine 2"
         self.assertEqual(self.processor.process_text(input_text), expected)
 
     def test_process_text_empty_input(self):
@@ -44,13 +44,13 @@ class TestTextProcessor(unittest.TestCase):
     def test_process_text_complex_cleaning(self):
         """test_process_text_complex_cleaning: Combined multi-stage text cleaning."""
         input_text = '***Header***\n"Content" with \'quotes\' and ======'
-        expected = "Header    Content with quotes and "
+        expected = "Header\nContent with quotes and "
         self.assertEqual(self.processor.process_text(input_text), expected)
 
     def test_process_text_removes_decorative_dividers(self):
         """test_process_text_removes_decorative_dividers: Verifies removal of decorative dividers like ___, ---, ###."""
         input_text = "Chapter 1\n___\nText with --- dividers and ### headers."
-        expected = "Chapter 1        Text with  dividers and  headers."
+        expected = "Chapter 1\n\nText with  dividers and  headers."
         self.assertEqual(self.processor.process_text(input_text), expected)
 
 if __name__ == '__main__':

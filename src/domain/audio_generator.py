@@ -13,7 +13,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
-from src.domain.exceptions import TransientGenerationException, FatalGenerationException
+from src.domain.exceptions import TransientGenerationException, FatalGenerationException, is_fatal_setup_error
+from src.domain.cancellable_batch import CancellableBatchMixin
 from src.domain.models import AudioChunk
 
 
@@ -112,7 +113,7 @@ def _is_transient_error(exc: BaseException) -> bool:
     return any(sub in msg for sub in _TRANSIENT_ERROR_SUBSTRINGS)
 
 
-class AudioGenerator:
+class AudioGenerator(CancellableBatchMixin):
     """
     Service responsible for generating audio files from text using Edge TTS.
 
@@ -178,6 +179,8 @@ class AudioGenerator:
         self._rate_limit_reset_time = 0.0
         self._consecutive_rate_limits = 0
         self._init_lock = threading.Lock()
+        self._init_cancellation()
+        self._auto_toggle_wlan = False
 
         self._loop_ready = threading.Event()
         self._semaphore: Optional[asyncio.Semaphore] = None
@@ -306,16 +309,15 @@ class AudioGenerator:
             )
 
         try:
-            future = asyncio.run_coroutine_threadsafe(_run_batch(), self._loop)
-            return future.result(timeout=None)
+            return self._run_batch_coroutine(_run_batch(), self._loop, len(chunks))
         except TimeoutError as e:
-            future.cancel()
             msg = "Batch generation timed out"
             logging.error(msg, exc_info=True)
             raise TimeoutError(msg) from e
         except Exception as e:
-            future.cancel()
             logging.error(f"Batch generation failed: {e}", exc_info=True)
+            if is_fatal_setup_error(e):
+                raise
             raise Exception(f"Batch generation failed: {str(e) or type(e).__name__}") from e
 
     # ------------------------------------------------------------------
@@ -387,6 +389,7 @@ class AudioGenerator:
                             f"{max_retries} attempt(s): {exc}",
                             exc_info=True
                         )
+                        self.last_error = f"chunk {chunk.chunk_number}: {exc}"
                         results[idx] = None  # marks chunk as failed, does NOT raise
                 finally:
                     queue.task_done()
@@ -400,6 +403,11 @@ class AudioGenerator:
                     w.cancel()
             raise
         return results
+
+    async def _network_is_up(self) -> bool:
+        """Connectivity probe off the event loop (the probe blocks for up to 3 x 3 s)."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._network_manager.is_connected)
 
     async def _generate_one_with_retry(
             self,
@@ -511,21 +519,21 @@ class AudioGenerator:
                 remaining = max_retries - attempt - 1
                 if remaining > 0:
                     # Check and recover network connection / WLAN on disconnect
-                    if self._network_manager and not self._network_manager.is_connected():
+                    if self._network_manager and not await self._network_is_up():
                         logging.warning(
                             f"Network loss detected during synthesis of chunk {chunk.chunk_number}. "
-                            "Waiting for connection restore and restarting WLAN..."
+                            "Waiting for connection restore..."
                         )
                         if self._network_lock:
                             async with self._network_lock:
-                                if not self._network_manager.is_connected():
-                                    loop = asyncio.get_event_loop()
+                                if not await self._network_is_up():
+                                    loop = asyncio.get_running_loop()
                                     restored = await loop.run_in_executor(
                                         None,
                                         self._network_manager.wait_for_network,
                                         300.0,  # max wait 5 min
                                         5.0,    # check interval
-                                        True    # auto toggle WLAN (nmcli/rfkill)
+                                        self._auto_toggle_wlan,
                                     )
                                     if restored:
                                         logging.info(

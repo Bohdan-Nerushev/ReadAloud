@@ -11,6 +11,7 @@ from src.application.app_controller import ApplicationController
 from src.application.services.xtts_setup_service import XttsSetupService
 from src.domain.models import ProjectConfig, GenerationTask, TaskStatus, TtsBackend
 from src.infrastructure.xtts_model_manager import XttsDiagnosticsResult
+from tests.unit._lifecycle_helpers import use_inline_runners
 
 
 class TestAppControllerXttsIntegration(unittest.TestCase):
@@ -41,9 +42,10 @@ class TestAppControllerXttsIntegration(unittest.TestCase):
             piper_setup_service=self.piper_setup_service,
             xtts_setup_service=self.xtts_setup_service,
         )
+        use_inline_runners(self.controller)
 
     def test_start_generation_process_checks_xtts_prerequisites(self):
-        """When starting task with XTTS backend, prerequisites must be checked and logged."""
+        """When starting a task with the XTTS backend, readiness is verified (fail-fast) before generation."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp_file:
             tmp_file.write("Test content")
             tmp_file_path = tmp_file.name
@@ -78,7 +80,7 @@ class TestAppControllerXttsIntegration(unittest.TestCase):
 
             self.audio_generator_resolver.assert_called_once_with(TtsBackend.XTTS)
             self.generation_service.switch_generator.assert_called_once_with(mock_generator)
-            self.xtts_setup_service.check_prerequisites.assert_called_once()
+            self.xtts_setup_service.ensure_ready.assert_called_once_with("uk", "female")
             self.generation_service.start_generation.assert_called_once()
         finally:
             Path(tmp_file_path).unlink(missing_ok=True)

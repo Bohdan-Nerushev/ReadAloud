@@ -27,6 +27,7 @@ import io
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -109,6 +110,8 @@ class XttsAudioGenerator:
         self._synth_lock = threading.RLock()
         self._model = None  # type: Optional[object]  # TTS instance, loaded lazily
         self._model_loaded: bool = False
+        self._cancel_epoch = 0
+        self.last_error: Optional[str] = None
 
     # ------------------------------------------------------------------
     # TtsGeneratorProtocol implementation
@@ -124,6 +127,14 @@ class XttsAudioGenerator:
         """Generates audio for a single chunk. Delegates to generate_audio_batch."""
         results = self.generate_audio_batch([chunk], language, gender, output_dir)
         return results[0]
+
+    def cancel(self) -> None:
+        """
+        Cooperatively aborts running batches: they stop before the next chunk and
+        interrupt retry back-off sleeps. Not sticky - batches started afterwards run.
+        A synthesis call already inside ``model.tts`` cannot be interrupted and finishes first.
+        """
+        self._cancel_epoch += 1
 
     def generate_audio_batch(
             self,
@@ -182,8 +193,12 @@ class XttsAudioGenerator:
         self._ensure_model_loaded()
 
         results: List[Optional[Tuple[str, float]]] = [None] * len(chunks)
+        epoch = self._cancel_epoch
 
         for idx, chunk in enumerate(chunks):
+            if self._cancel_epoch != epoch:
+                logger.info("[XTTS] Batch cancelled before chunk %d.", chunk.chunk_number)
+                break
             logger.debug(
                 "[XTTS] Synthesising chunk %d/%d (chunk_number=%d, chars=%d)...",
                 idx + 1, len(chunks), chunk.chunk_number, len(chunk.text_content),
@@ -196,6 +211,7 @@ class XttsAudioGenerator:
                     output_path=output_path,
                     max_retries=max_retries,
                     backoff=backoff,
+                    epoch=epoch,
                 )
                 results[idx] = result
                 logger.info(
@@ -210,11 +226,14 @@ class XttsAudioGenerator:
                             "[XTTS] Error in chunk callback for chunk %d: %s",
                             chunk.chunk_number, cb_err, exc_info=True,
                         )
+            except (XttsNotAvailableException, XttsReferenceAudioMissingException):
+                raise  # setup problem: no other chunk can succeed either
             except Exception as exc:
                 logger.error(
                     "[XTTS] Chunk %d/%d (chunk_number=%d) failed permanently: %s",
                     idx + 1, len(chunks), chunk.chunk_number, exc, exc_info=True,
                 )
+                self.last_error = f"chunk {chunk.chunk_number}: {getattr(exc, 'message', None) or exc}"
                 results[idx] = None
 
         successful = sum(1 for r in results if r is not None)
@@ -319,6 +338,7 @@ class XttsAudioGenerator:
             output_path: Path,
             max_retries: int,
             backoff: float,
+            epoch: Optional[int] = None,
     ) -> Tuple[str, float]:
         """Synthesises one chunk with exponential back-off retry for transient errors."""
         if not chunk.text_content or not chunk.text_content.strip():
@@ -329,6 +349,8 @@ class XttsAudioGenerator:
         last_exception: Optional[BaseException] = None
 
         for attempt in range(max_retries):
+            if epoch is not None and self._cancel_epoch != epoch:
+                raise FatalGenerationException(f"Chunk {chunk.chunk_number} cancelled")
             try:
                 with self._synth_lock:
                     # Re-checked on every attempt: an earlier OOM (or a user "Unload")
@@ -356,14 +378,13 @@ class XttsAudioGenerator:
                 last_exception = exc
                 remaining = max_retries - attempt - 1
                 if remaining > 0:
-                    import time
                     delay = min(60.0, backoff * (2 ** attempt))
                     logger.warning(
                         "Transient XTTS error on chunk %d (attempt %d/%d): %s. "
                         "Retrying in %.1fs.",
                         chunk.chunk_number, attempt + 1, max_retries, exc, delay,
                     )
-                    time.sleep(delay)
+                    self._interruptible_sleep(delay, epoch)
                 else:
                     logger.error(
                         "Chunk %d exhausted all %d XTTS retry attempts. Last error: %s",
@@ -374,6 +395,15 @@ class XttsAudioGenerator:
             f"XTTS chunk {chunk.chunk_number} failed after {max_retries} attempt(s): "
             f"{last_exception}",
         )
+
+    def _interruptible_sleep(self, delay: float, epoch: Optional[int]) -> None:
+        """Sleeps in small steps so cancel() takes effect within ~0.1 s."""
+        step = 0.1
+        steps = max(1, int(delay / step))
+        for _ in range(steps):
+            if epoch is not None and self._cancel_epoch != epoch:
+                return
+            time.sleep(step)
 
     # ------------------------------------------------------------------
     # Core synthesis pipeline

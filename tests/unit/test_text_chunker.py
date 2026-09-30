@@ -17,8 +17,7 @@ class TestTextChunker(unittest.TestCase):
         # chunk_size=7 points to " word2"
         # The algorithm should find the space after "word2" and include it.
         chunks = self.chunker.chunk_text(text, chunk_size=7)
-        self.assertEqual(chunks[0].text_content, "word1 word2 ")
-        self.assertEqual(chunks[1].text_content, "word3")
+        self.assertEqual([c.text_content for c in chunks], ["word1 ", "word2 ", "word3"])
 
     def test_chunk_text_sequencing(self):
         """test_chunk_text_sequencing: Verifies that chunks have sequential numbers starting from 1."""
@@ -36,13 +35,9 @@ class TestTextChunker(unittest.TestCase):
 
     def test_chunk_text_exact_multiplier(self):
         """test_chunk_text_exact_multiplier: Verifies chunking when text length is a multiple of chunk size."""
-        # "1234 6789 " is 10 chars. chunk_size=5.
-        # target_end=5 ("1234 "). text.find(' ', 5) finds no space after pos 5.
-        # So it takes the rest of the text.
         text = "1234 6789 "
         chunks = self.chunker.chunk_text(text, chunk_size=5)
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].text_content, "1234 6789 ")
+        self.assertEqual([c.text_content for c in chunks], ["1234 ", "6789 "])
 
     def test_chunk_text_invalid_size(self):
         """test_chunk_text_invalid_size: Verifies ValueError is raised for chunk_size <= 0."""

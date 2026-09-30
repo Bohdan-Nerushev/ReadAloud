@@ -21,8 +21,16 @@ from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from src.domain.exceptions import XttsNotAvailableException
-from src.infrastructure.xtts_model_manager import XttsDiagnosticsResult, XttsModelManager
+from src.domain.exceptions import (
+    BackendNotReadyException,
+    XttsNotAvailableException,
+    XttsReferenceAudioMissingException,
+)
+from src.infrastructure.xtts_model_manager import (
+    XTTS_SUPPORTED_LANGUAGES,
+    XttsDiagnosticsResult,
+    XttsModelManager,
+)
 
 if TYPE_CHECKING:
     from src.domain.xtts_audio_generator import XttsAudioGenerator
@@ -157,6 +165,39 @@ class XttsSetupService(QObject):
     # ------------------------------------------------------------------
     # Model unload
     # ------------------------------------------------------------------
+
+    def ensure_ready(self, language: str, gender: str) -> XttsDiagnosticsResult:
+        """
+        Fail-fast check run before an XTTS task starts.
+
+        Raises:
+            BackendNotReadyException: with the real reason when the task cannot work
+                (unsupported language, missing TTS package / CUDA / model weights /
+                speaker reference audio, or not enough free VRAM for a fresh load).
+        """
+        if language not in XTTS_SUPPORTED_LANGUAGES:
+            raise BackendNotReadyException(
+                f"Language '{language}' is not supported by XTTS-v2. "
+                f"Supported: {', '.join(sorted(XTTS_SUPPORTED_LANGUAGES))}."
+            )
+        result = self._model_manager.run_diagnostics()
+        loaded = self.is_model_loaded()
+
+        if not result.tts_package_installed or not result.cuda_available:
+            raise BackendNotReadyException(result.error_message or "XTTS-v2 prerequisites are not met.")
+        if not result.model_cached:
+            raise BackendNotReadyException(
+                "XTTS-v2 model weights are not downloaded. "
+                "Use 'Download Model' in the XTTS panel first."
+            )
+        # A loaded model itself occupies the VRAM, so low free VRAM is only a problem for a fresh load.
+        if not loaded and not result.vram_sufficient:
+            raise BackendNotReadyException(result.error_message or "Insufficient free VRAM for XTTS-v2.")
+        try:
+            self._model_manager.get_reference_audio_path(language, gender)
+        except XttsReferenceAudioMissingException as exc:
+            raise BackendNotReadyException(exc.message, cause=exc) from exc
+        return result
 
     def is_model_loaded(self) -> bool:
         """True if the generator currently holds the XTTS model in memory."""

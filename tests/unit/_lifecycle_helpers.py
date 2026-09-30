@@ -19,6 +19,26 @@ from src.domain.models import ProjectConfig, TtsBackend
 from src.infrastructure.file_manager import FileManager
 
 
+def run_inline(fn, on_done=None, on_error=None):
+    """Synchronous stand-in for the controller's background runners (tests only)."""
+    if on_done is None and on_error is None:
+        fn()
+        return
+    try:
+        result = fn()
+    except Exception as exc:
+        on_error(exc)
+    else:
+        on_done(result)
+
+
+def use_inline_runners(controller):
+    """Makes backend preparation/release run synchronously, so tests are deterministic."""
+    controller._backend_runner = run_inline
+    controller._release_runner = run_inline
+    return controller
+
+
 def make_config(tmp: Path, name: str = "Book", backend: TtsBackend = TtsBackend.EDGE_TTS) -> ProjectConfig:
     input_file = tmp / f"{name}.txt"
     input_file.write_text("hello", encoding="utf-8")
@@ -50,6 +70,7 @@ def make_controller(state_file: Path, generation_service=None, assembly_service=
         assembly_service=assembly_service,
         persistence_service=persistence,
     )
+    use_inline_runners(controller)
     return controller, queue, persistence, generation_service, assembly_service
 
 

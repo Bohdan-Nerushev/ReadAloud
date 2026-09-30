@@ -38,7 +38,7 @@ class TestIntegration(unittest.TestCase):
         """
         raw_text = "Hello 'world'!\nThis is a *** test ====== of the system.\nNext line."
         # TextProcessor: ' and " removed, *** and ====== removed, \n -> 4 spaces
-        expected_processed = "Hello world!    This is a  test  of the system.    Next line."
+        expected_processed = "Hello world!\nThis is a  test  of the system.\nNext line."
         
         # 1. Process
         processed = self.text_processor.process_text(raw_text)

@@ -34,8 +34,11 @@ from wyoming.tts import Synthesize, SynthesizeVoice
 from src.domain.exceptions import (
     FatalGenerationException,
     PiperConnectionException,
+    PiperNotAvailableException,
     TransientGenerationException,
+    is_fatal_setup_error,
 )
+from src.domain.cancellable_batch import CancellableBatchMixin
 from src.domain.models import AudioChunk
 
 logger = logging.getLogger(__name__)
@@ -116,7 +119,7 @@ def _is_piper_transient_error(exc: BaseException) -> bool:
     return any(kw in msg for kw in transient_keywords)
 
 
-class PiperAudioGenerator:
+class PiperAudioGenerator(CancellableBatchMixin):
     """
     TTS generator that synthesises audio via a locally running wyoming-piper container.
 
@@ -136,6 +139,7 @@ class PiperAudioGenerator:
 
     # Sentinel used to stop async workers cleanly
     _STOP_SENTINEL = object()
+    MAX_CONSECUTIVE_REFUSALS = 3
 
     def __init__(
             self,
@@ -159,6 +163,7 @@ class PiperAudioGenerator:
         self._synthesis_timeout = synthesis_timeout
 
         self._init_lock = threading.Lock()
+        self._init_cancellation()
         self._loop_ready = threading.Event()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
@@ -272,16 +277,15 @@ class PiperAudioGenerator:
             )
 
         try:
-            future = asyncio.run_coroutine_threadsafe(_run_batch(), self._loop)
-            return future.result(timeout=None)
+            return self._run_batch_coroutine(_run_batch(), self._loop, len(chunks))
         except TimeoutError as e:
-            future.cancel()
             msg = "Piper batch generation timed out"
             logger.error(msg, exc_info=True)
             raise TimeoutError(msg) from e
         except Exception as e:
-            future.cancel()
             logger.error("Piper batch generation failed: %s", e, exc_info=True)
+            if is_fatal_setup_error(e):
+                raise
             raise Exception(f"Piper batch generation failed: {str(e) or type(e).__name__}") from e
 
     def close(self) -> None:
@@ -345,11 +349,14 @@ class PiperAudioGenerator:
                                     "Error in chunk callback for chunk %d: %s",
                                     chunk.chunk_number, cb_err, exc_info=True,
                                 )
+                    except PiperNotAvailableException:
+                        raise  # circuit breaker: server is down, abort the whole batch
                     except Exception as exc:
                         logger.error(
                             "Chunk %d failed permanently after %d attempt(s): %s",
                             chunk.chunk_number, max_retries, exc, exc_info=True,
                         )
+                        self.last_error = f"chunk {chunk.chunk_number}: {exc}"
                         results[idx] = None
                 finally:
                     queue.task_done()
@@ -384,6 +391,7 @@ class PiperAudioGenerator:
             )
 
         last_exception: Optional[BaseException] = None
+        refused_in_a_row = 0
 
         for attempt in range(max_retries):
             try:
@@ -421,6 +429,7 @@ class PiperAudioGenerator:
                 return str(mp3_path.absolute()), duration
 
             except asyncio.TimeoutError as te:
+                refused_in_a_row = 0
                 last_exception = PiperConnectionException(
                     f"Timeout synthesising chunk {chunk.chunk_number} via Piper",
                     cause=te,
@@ -428,6 +437,13 @@ class PiperAudioGenerator:
                 self._cleanup_tmp_files(wav_tmp_path, mp3_tmp_path)
 
             except ConnectionRefusedError as ce:
+                refused_in_a_row += 1
+                if refused_in_a_row >= self.MAX_CONSECUTIVE_REFUSALS:
+                    raise PiperNotAvailableException(
+                        f"Piper server on {self._host}:{self._port} refused the connection "
+                        f"{refused_in_a_row} times in a row; the container is not running.",
+                        cause=ce,
+                    ) from ce
                 last_exception = PiperConnectionException(
                     f"Piper container refused connection on port {self._port} "
                     f"(chunk {chunk.chunk_number})",
@@ -435,6 +451,7 @@ class PiperAudioGenerator:
                 )
 
             except Exception as exc:
+                refused_in_a_row = 0
                 last_exception = exc
                 if not _is_piper_transient_error(exc):
                     logger.error(
@@ -483,6 +500,7 @@ class PiperAudioGenerator:
         """
         voice_obj = SynthesizeVoice(name=voice)
         wav_file: Optional[wave.Wave_write] = None
+        got_stop = False
 
         try:
             async with AsyncTcpClient(self._host, self._port) as client:
@@ -512,10 +530,21 @@ class PiperAudioGenerator:
 
                     elif AudioStop.is_type(event.type):
                         logger.debug("Piper audio synthesis finished.")
+                        got_stop = True
                         break
         finally:
             if wav_file is not None:
                 wav_file.close()
+
+        if not got_stop:
+            # Connection dropped mid-stream: the WAV is truncated and must never be accepted.
+            try:
+                wav_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise PiperConnectionException(
+                f"Piper connection closed before AudioStop for voice '{voice}'; audio is incomplete."
+            )
 
         if not wav_path.exists() or wav_path.stat().st_size == 0:
             raise PiperConnectionException(

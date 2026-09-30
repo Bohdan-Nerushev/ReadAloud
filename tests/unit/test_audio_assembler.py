@@ -14,6 +14,7 @@ class TestAudioAssembler(unittest.TestCase):
         self.assembler = AudioAssembler()
         self.mock_popen = patch('subprocess.Popen').start()
         self.mock_run = patch('subprocess.run').start()
+        self.mock_replace = patch('src.domain.audio_assembler.os.replace').start()
         
         # Setup mock process
         self.process_instance = MagicMock()
@@ -68,7 +69,7 @@ class TestAudioAssembler(unittest.TestCase):
                 self.assertEqual(cmd[0], 'ffmpeg')
                 self.assertIn('-f', cmd)
                 self.assertIn('concat', cmd)
-                self.assertIn('out.mp3', cmd)
+                self.assertIn('out.mp3.tmp', cmd)
 
     def test_assemble_audio_speed_adjustment(self):
         """test_assemble_audio_speed_adjustment: Verifies addition of the atempo audio filter for speed adjustment."""

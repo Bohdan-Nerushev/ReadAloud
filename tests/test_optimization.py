@@ -38,6 +38,7 @@ class TestOptimization(unittest.TestCase):
         
         with patch('subprocess.Popen') as mock_popen, \
              patch('src.domain.audio_assembler.Path') as mock_path_cls, \
+             patch('src.domain.audio_assembler.os.replace'), \
              patch('builtins.open', new_callable=MagicMock) as mock_file_open:
             
             # Configure Path mock

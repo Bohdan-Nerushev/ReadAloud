@@ -4,6 +4,7 @@ Audio assembly service for combining multiple audio chunks.
 This module handles concatenation of individual audio chunks into a final MP3 file.
 """
 
+import os
 import subprocess
 import atexit
 import signal
@@ -71,7 +72,8 @@ class AudioAssembler:
             
         # Create a temporary file list for ffmpeg
         list_path = output_dir / f"concat_{uuid.uuid4().hex}.txt"
-        
+        tmp_output_path: Optional[Path] = output_file_path.with_name(output_file_path.name + ".tmp")
+
         try:
             # 1. Calculate total duration
             total_duration = self._calculate_total_duration(audio_files, durations)
@@ -80,11 +82,13 @@ class AudioAssembler:
             self._create_concat_list(audio_files, list_path)
             
             # 3. Construct ffmpeg command
-            cmd = self._build_ffmpeg_command(list_path, output_file_path, speed, copy_codec)
-            
+            # ffmpeg writes to a temp name; the real name appears only after a complete run
+            cmd = self._build_ffmpeg_command(list_path, tmp_output_path, speed, copy_codec)
+
             # Run ffmpeg
             self._execute_ffmpeg(cmd, total_duration, speed, callback)
-            
+            os.replace(str(tmp_output_path), str(output_file_path))
+
         except Exception as e:
             if self._stopped:
                 logging.info(f"Assembly process stopped: {e}")
@@ -92,11 +96,12 @@ class AudioAssembler:
                 logging.error(f"Failed to assemble audio files: {e}")
             raise Exception(f"Failed to assemble audio files: {str(e)}") from e
         finally:
-            if list_path.exists():
-                try:
-                    list_path.unlink()
-                except Exception:
-                    pass
+            for leftover in (list_path, tmp_output_path):
+                if leftover is not None and leftover.exists():
+                    try:
+                        leftover.unlink()
+                    except Exception:
+                        pass
 
     def _calculate_total_duration(self, audio_files: List[str], durations: Optional[List[float]] = None) -> float:
         if durations and len(durations) == len(audio_files):

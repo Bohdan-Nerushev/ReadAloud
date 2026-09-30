@@ -149,6 +149,15 @@ class QueueService(QObject):
         self._current_task = None
         return task
 
+    def restore_current_task(self, task: GenerationTask) -> None:
+        """Installs a task loaded from disk as the current (paused) task."""
+        self._current_task = task
+        self.statusChanged.emit(True)
+
+    def restore_pending_task(self, task: GenerationTask) -> None:
+        """Appends a task loaded from disk to the waiting queue."""
+        self._task_queue.append(task)
+
     def restore_failed_task(self, task: GenerationTask) -> None:
         """Puts a previously failed/stopped task (loaded from disk) back into the history registry."""
         if task not in self._history:

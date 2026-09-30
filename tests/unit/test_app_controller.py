@@ -127,12 +127,11 @@ class TestAppController(unittest.TestCase):
         self.task_1.status = TaskStatus.PROCESSING
         self.controller._persistence_service.load_state.return_value = [self.task_1]
         
-        mock_signal = MagicMock()
-        self.queue_service.statusChanged = mock_signal
-        
+        self.queue_service.get_next_task.return_value = None
+
         self.controller.restore_state()
-        
-        mock_signal.emit.assert_called_once_with(True)
+
+        self.queue_service.restore_current_task.assert_called_once_with(self.task_1)
         self.assertEqual(self.task_1.status, TaskStatus.PAUSED)
 
     def test_prepare_output_path_adds_timestamp(self):

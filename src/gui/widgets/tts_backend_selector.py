@@ -12,6 +12,7 @@ Design:
   - When switching away from XTTS, the model is unloaded via XttsSetupService.
 """
 
+import html
 import logging
 from typing import Optional
 
@@ -279,6 +280,24 @@ class TtsBackendSelector(QWidget):
         QPushButton:disabled { background-color: #cccccc; color: #666666; }
     """
 
+    @staticmethod
+    def _make_error_label() -> QLabel:
+        """Hidden-until-needed label that shows why a backend cannot be used."""
+        label = QLabel("")
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setVisible(False)
+        return label
+
+    @staticmethod
+    def _show_error(label: QLabel, message: str) -> None:
+        if message:
+            label.setText(f"<span style='color: red'>❌ {html.escape(message)}</span>")
+            label.setVisible(True)
+        else:
+            label.setText("")
+            label.setVisible(False)
+
     def _build_piper_panel(self) -> QFrame:
         """Builds the Piper prerequisite status panel."""
         panel = QFrame()
@@ -299,6 +318,9 @@ class TtsBackendSelector(QWidget):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(lbl)
 
+        self._status_error = self._make_error_label()
+        layout.addWidget(self._status_error)
+
         btn_row = QHBoxLayout()
         self._btn_piper_recheck = QPushButton("↻ Re-check")
         self._btn_piper_recheck.setToolTip("Run prerequisite checks again.")
@@ -306,7 +328,7 @@ class TtsBackendSelector(QWidget):
         btn_row.addWidget(self._btn_piper_recheck)
         layout.addLayout(btn_row)
 
-        panel.setMinimumHeight(145)
+        panel.setMinimumHeight(170)
         return panel
 
     def _build_xtts_panel(self) -> QFrame:
@@ -332,6 +354,9 @@ class TtsBackendSelector(QWidget):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(lbl)
 
+        self._xtts_status_error = self._make_error_label()
+        layout.addWidget(self._xtts_status_error)
+
         btn_row = QHBoxLayout()
         self._btn_xtts_download = QPushButton("⬇ Download Model")
         self._btn_xtts_download.setToolTip("Download XTTS-v2 model weights (~1.8 GB) from Coqui hub.")
@@ -350,7 +375,7 @@ class TtsBackendSelector(QWidget):
         btn_row.addWidget(self._btn_xtts_recheck)
         layout.addLayout(btn_row)
 
-        panel.setMinimumHeight(175)
+        panel.setMinimumHeight(200)
         return panel
 
     # ------------------------------------------------------------------
@@ -508,6 +533,7 @@ class TtsBackendSelector(QWidget):
         self._status_image.setText(f"Image: {checking_text}")
         self._status_model.setText(f"Voice model: {checking_text}")
         self._status_container.setText("")
+        self._show_error(self._status_error, "")
 
     def _update_piper_status_display(self, result: PiperPrerequisiteResult) -> None:
         ok = "<span style='color: green'>✅</span>"
@@ -533,6 +559,7 @@ class TtsBackendSelector(QWidget):
         else:
             self._status_container.setText(f"Container: {fail} not running")
 
+        self._show_error(self._status_error, result.error_message or "")
         self._btn_piper_recheck.setEnabled(True)
 
     # ------------------------------------------------------------------
@@ -546,6 +573,7 @@ class TtsBackendSelector(QWidget):
         self._xtts_status_vram.setText(f"VRAM: {checking}")
         self._xtts_status_model.setText(f"Model cache: {checking}")
         self._xtts_status_speakers.setText("")
+        self._show_error(self._xtts_status_error, "")
 
     def _update_xtts_status_display(self, result: XttsDiagnosticsResult) -> None:
         ok = "<span style='color: green'>✅</span>"
@@ -583,6 +611,8 @@ class TtsBackendSelector(QWidget):
             self._xtts_status_speakers.setText(
                 f"Speaker WAVs: {ok} all present"
             )
+
+        self._show_error(self._xtts_status_error, result.error_message or "")
 
     @staticmethod
     def xtts_unload_enabled(model_loaded: bool, generating: bool, busy: bool) -> bool:

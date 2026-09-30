@@ -111,7 +111,7 @@ class NetworkManager:
             self,
             max_wait_seconds: float = 300.0,
             check_interval: float = 5.0,
-            auto_toggle_wlan: bool = True
+            auto_toggle_wlan: bool = False
     ) -> bool:
         """
         Waits until network connection is restored or until max_wait_seconds expires.
@@ -122,7 +122,9 @@ class NetworkManager:
         Args:
             max_wait_seconds: Maximum duration in seconds to wait for network.
             check_interval: Delay in seconds between connection checks.
-            auto_toggle_wlan: If True, attempts to toggle WLAN if down > 15s.
+            auto_toggle_wlan: Opt-in (default False). If True, toggles WLAN off/on
+                after 15s of downtime. Disabled by default because it disrupts VPN/SSH
+                sessions and other applications.
 
         Returns:
             True if connection restored, False if timeout exceeded.

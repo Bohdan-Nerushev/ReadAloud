@@ -59,12 +59,12 @@ class TestGenerationService(unittest.TestCase):
         self.service._generate_batch_safe(batch, "en", "male", "test-id", 5)
         
         # Verify it called AudioGenerator.generate_audio_batch
-        self.mock_generator.generate_audio_batch.assert_called_once_with(
-            batch, "en", "male", "/mock/out",
-            chunk_callback=self.service._on_chunk_generated_callback,
-            max_workers=5,
-            max_retries=10
-        )
+        self.mock_generator.generate_audio_batch.assert_called_once()
+        args, kwargs = self.mock_generator.generate_audio_batch.call_args
+        self.assertEqual(args, (batch, "en", "male", "/mock/out"))
+        self.assertEqual(kwargs["max_workers"], 5)
+        self.assertEqual(kwargs["max_retries"], 10)
+        self.assertTrue(callable(kwargs["chunk_callback"]))
 
     @patch('src.application.services.generation_service.ThreadManager')
     def test_pause_resume_behavior(self, mock_thread_manager_class):

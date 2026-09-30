@@ -79,6 +79,17 @@ class ConfigurationException(ReadAloudException):
     pass
 
 
+class BackendNotReadyException(ReadAloudException):
+    """
+    Raised before generation starts when the selected TTS backend cannot work
+    (Docker missing, image/model unavailable, XTTS package/CUDA/model missing...).
+
+    The message is the real, user-facing reason and is shown as-is; the task
+    fails immediately instead of burning retries on every chunk.
+    """
+    pass
+
+
 class PiperNotAvailableException(ReadAloudException):
     """
     Raised when Docker daemon or the Piper Docker image is not available.
@@ -167,3 +178,21 @@ class XttsReferenceAudioMissingException(FatalGenerationException):
     """
     pass
 
+
+
+def is_fatal_setup_error(exc: BaseException) -> bool:
+    """
+    True for errors raised by a whole batch run (not by a single chunk) that no retry
+    can fix: backend not installed/ready, missing speaker audio, unsupported language.
+    """
+    return isinstance(exc, (
+        BackendNotReadyException,
+        PiperNotAvailableException,
+        PiperModelMissingException,
+        XttsNotAvailableException,
+        XttsModelNotLoadedException,
+        XttsReferenceAudioMissingException,
+        ConfigurationException,
+        ValueError,
+        FileNotFoundError,
+    ))

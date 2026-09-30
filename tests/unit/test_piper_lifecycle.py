@@ -12,6 +12,7 @@ import pytest
 
 from src.application.app_controller import ApplicationController
 from src.domain.models import ProjectConfig, TtsBackend, TaskStatus, GenerationTask
+from tests.unit._lifecycle_helpers import use_inline_runners
 
 
 class TestPiperLifecycle:
@@ -61,6 +62,7 @@ class TestPiperLifecycle:
             persistence_service=mock_services["persistence_service"],
             piper_setup_service=mock_services["piper_setup_service"],
         )
+        use_inline_runners(controller)
 
         input_file = tmp_path / "test.txt"
         input_file.write_text("sample text")
@@ -80,8 +82,9 @@ class TestPiperLifecycle:
         # Call _start_generation_process directly
         controller._start_generation_process()
 
-        # Check that start_container was called with task language and gender
-        mock_services["piper_setup_service"].start_container.assert_called_once_with("ru", "male")
+        # Readiness (prerequisites + container start) is checked via ensure_ready for this task's voice
+        mock_services["piper_setup_service"].ensure_ready.assert_called_once_with("ru", "male")
+        mock_services["generation_service"].start_generation.assert_called_once()
 
     def test_auto_stop_piper_when_queue_is_idle(self, mock_services):
         """
@@ -98,6 +101,7 @@ class TestPiperLifecycle:
             persistence_service=mock_services["persistence_service"],
             piper_setup_service=mock_services["piper_setup_service"],
         )
+        use_inline_runners(controller)
 
         # Queue returns no active or pending tasks
         mock_services["queue_service"].get_all_tasks.return_value = []
@@ -121,6 +125,7 @@ class TestPiperLifecycle:
             persistence_service=mock_services["persistence_service"],
             piper_setup_service=mock_services["piper_setup_service"],
         )
+        use_inline_runners(controller)
 
         controller.shutdown()
 

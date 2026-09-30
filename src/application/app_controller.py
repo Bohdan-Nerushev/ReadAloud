@@ -7,11 +7,12 @@ This module orchestrates the entire application, coordinating between GUI, domai
 import logging
 import time
 import re
+import tempfile
 import threading
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, List, Any, Dict, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
 
@@ -30,6 +31,12 @@ from src.application.services.xtts_setup_service import XttsSetupService
 from src.infrastructure.logging_config import set_correlation_id
 
 
+
+
+class _BackendBridge(QObject):
+    """Carries results of background backend operations back to the GUI thread."""
+
+    finished = pyqtSignal(object, object)  # (callback, argument)
 
 
 class PreparationWorker(QThread):
@@ -57,6 +64,20 @@ class PreparationWorker(QThread):
         self.text_chunker = text_chunker
 
         
+    @staticmethod
+    def resolve_workspace_dir(config: ProjectConfig) -> str:
+        """
+        Where temporary text/audio directories are created.
+
+        Never the input file's directory (it may be read-only media, and the user's
+        folder should not be cluttered): the output directory if writable, otherwise
+        the system temp directory.
+        """
+        output_dir = Path(config.output_dir_path).expanduser() if config.output_dir_path else None
+        if output_dir is not None and output_dir.is_dir() and os.access(output_dir, os.W_OK | os.X_OK):
+            return str(output_dir)
+        return tempfile.gettempdir()
+
     def run(self) -> None:
         """Execute the preparation tasks."""
         # Set correlation ID for this worker thread
@@ -85,7 +106,7 @@ class PreparationWorker(QThread):
                     text = remaining + block
                     # Ensure we don't split words across buffers
                     if len(block) == buffer_size:
-                        last_space = text.rfind(' ')
+                        last_space = max(text.rfind(' '), text.rfind('\n'))
                         if last_space != -1:
                             to_chunk = text[:last_space]
                             remaining = text[last_space:]
@@ -127,7 +148,7 @@ class PreparationWorker(QThread):
             if self.isInterruptionRequested():
                 return
 
-            workspace_dir = str(Path(self.config.input_file_path).expanduser().parent)
+            workspace_dir = self.resolve_workspace_dir(self.config)
             text_dir = self.file_manager.create_timestamped_dir("text", workspace_dir)
             audio_dir = self.file_manager.create_timestamped_dir("audio", workspace_dir)
             
@@ -212,6 +233,20 @@ class ApplicationController(QObject):
         self._piper_used = False
         self._shutdown_done = False
 
+        # Docker / GPU operations never run on the GUI thread. The runner executes
+        # ``fn`` in the background and delivers ``on_done(result)`` / ``on_error(exc)``
+        # on the GUI thread; tests inject a synchronous runner.
+        self._bridge = _BackendBridge()
+        self._bridge.finished.connect(self._deliver_backend_result)
+        self._backend_runner: Callable[[Callable[[], Any], Callable[[Any], None], Callable[[Exception], None]], None] = \
+            self._run_backend_in_thread
+        self._release_runner: Callable[[Callable[[], None]], None] = self._run_release_in_thread
+        self._backend_lock = threading.Lock()
+        self._prep_token = 0
+        # Backends a started/queued task needs; read by the release thread so it never
+        # stops a backend that a new task has just begun to use.
+        self._backends_needed: set = set()
+
         # Callable (backend: TtsBackend) -> TtsGeneratorProtocol
         # Allows dynamic switching of the TTS generator per task.
         self._audio_generator_resolver = audio_generator_resolver
@@ -256,6 +291,7 @@ class ApplicationController(QObject):
         self._generation_service.batchGenerated.connect(self._on_batch_generated)
         self._generation_service.batchFailed.connect(self._on_batch_failed)
         self._generation_service.errorOccurred.connect(self.errorOccurred.emit)
+        self._generation_service.generationAborted.connect(self._on_generation_aborted)
         
         # Assembly Service signals
         self._assembly_service.assemblyProgressUpdated.connect(self._on_assembly_progress)
@@ -380,7 +416,12 @@ class ApplicationController(QObject):
         self._handle_task_failure(error_msg)
 
     def _start_generation_process(self) -> None:
-        """Initializes and starts the generation via GenerationService."""
+        """
+        Prepares the task's TTS backend (off the GUI thread) and then starts generation.
+
+        Local backends are checked fail-fast: if Docker/Piper/XTTS cannot work, the task
+        fails at once with the real reason instead of retrying every chunk.
+        """
         task = self._get_current_task()
         if not task:
             return
@@ -395,54 +436,69 @@ class ApplicationController(QObject):
                 type(generator).__name__, task.config.tts_backend.value, task.id,
             )
 
-        # Auto-start Piper Docker container if needed for Piper backend
-        if task.config.tts_backend == TtsBackend.PIPER and self._piper_setup_service is not None:
-            self._piper_used = True
-            try:
-                prereq = self._piper_setup_service.check_prerequisites(
-                    task.config.language, task.config.gender
-                )
-                logging.info(
-                    "Piper prerequisite check for task %s: docker=%s, image=%s, model=%s, conflict=%s, running=%s",
-                    task.id, prereq.docker_available, prereq.image_available,
-                    prereq.model_present, prereq.port_conflict, prereq.container_running,
-                )
-                if not prereq.container_running:
-                    if not prereq.can_start_container:
-                        err_msg = prereq.error_message or "Docker is not available or port 10200 is in use."
-                        logging.error(
-                            "Cannot start Piper container for task %s: %s",
-                            task.id, err_msg,
-                        )
-                        self._handle_task_failure(f"Piper error: {err_msg}")
-                        return
-                    logging.info(
-                        "Auto-starting Piper Docker container for task %s (%s/%s)...",
-                        task.id, task.config.language, task.config.gender,
-                    )
-                    self._piper_setup_service.start_container(
-                        task.config.language, task.config.gender
-                    )
-            except Exception as e:
-                logging.error("Failed to auto-start Piper container for task %s: %s", task.id, e, exc_info=True)
-                self._handle_task_failure(f"Failed to start Piper container: {e}")
-                return
+        backend = task.config.tts_backend
+        prepare = self._make_backend_preparation(task)
+        if prepare is None:
+            self._begin_generation(task)
+            return
 
-        # Check prerequisites & log info if XTTS backend
+        self._prep_token += 1
+        token = self._prep_token
+        self._backends_needed.add(backend)
+        if backend == TtsBackend.PIPER:
+            self._piper_used = True
+        label = "Piper (Docker)" if backend == TtsBackend.PIPER else "XTTS-v2"
+        self._queue_service.update_task_status(TaskStatus.PROCESSING, f"Preparing {label}...")
+
+        def on_done(_result: Any) -> None:
+            if self._is_prep_current(token, task):
+                self._begin_generation(task)
+
+        def on_error(exc: Exception) -> None:
+            if not self._is_prep_current(token, task):
+                return
+            reason = getattr(exc, "message", None) or str(exc) or type(exc).__name__
+            logging.error("%s is not ready for task %s: %s", label, task.id, reason)
+            self._handle_task_failure(f"{label} is not ready: {reason}")
+
+        self._backend_runner(prepare, on_done, on_error)
+
+    def _make_backend_preparation(self, task: GenerationTask) -> Optional[Callable[[], Any]]:
+        """Returns the blocking readiness routine for the task's backend, or None if none is needed."""
+        cfg = task.config
+        if cfg.tts_backend == TtsBackend.PIPER and self._piper_setup_service is not None:
+            service = self._piper_setup_service
+        elif cfg.tts_backend == TtsBackend.XTTS and self._xtts_setup_service is not None:
+            service = self._xtts_setup_service
+        else:
+            return None
+
+        def prepare() -> Any:
+            with self._backend_lock:
+                return service.ensure_ready(cfg.language, cfg.gender)
+
+        return prepare
+
+    def _is_prep_current(self, token: int, task: GenerationTask) -> bool:
+        current = self._get_current_task()
+        return (
+            token == self._prep_token
+            and not self._is_stopped
+            and current is not None
+            and current.id == task.id
+        )
+
+    def _invalidate_backend_prep(self) -> None:
+        """Makes any in-flight backend preparation ignore its result."""
+        self._prep_token += 1
+
+    def _begin_generation(self, task: GenerationTask) -> None:
+        """Starts the GenerationService once the backend is known to be ready."""
         if task.config.tts_backend == TtsBackend.XTTS:
             logging.info(
                 "[XTTS] Starting generation with backend XTTS for task %s (lang=%s, voice=%s)",
                 task.id, task.config.language, getattr(task.config, 'voice_name', None),
             )
-            if self._xtts_setup_service is not None:
-                try:
-                    prereq = self._xtts_setup_service.check_prerequisites()
-                    logging.info(
-                        "[XTTS] Prerequisites check for task %s: tts_pkg=%s, cuda=%s, vram_sufficient=%s, model_cached=%s, free_vram=%.2fGB, is_ready=%s",
-                        task.id, prereq.tts_package_installed, prereq.cuda_available, prereq.vram_sufficient, prereq.model_cached, prereq.vram_free_gb, prereq.is_ready,
-                    )
-                except Exception as exc:
-                    logging.warning("[XTTS] Prerequisites check warning for task %s: %s", task.id, exc)
 
         self._generation_service.start_generation(
             task,
@@ -452,6 +508,31 @@ class ApplicationController(QObject):
 
         self._progress_timer.start(500)
         self._monitor_completion()
+
+    def _on_generation_aborted(self, reason: str) -> None:
+        """A whole batch failed for a reason no retry can fix: fail the task with the real cause."""
+        if self._is_stopped or self._get_current_task() is None:
+            return
+        self._stop_completion_monitor()
+        self._progress_timer.stop()
+        self._handle_task_failure(f"Generation aborted: {reason}")
+
+    def _run_backend_in_thread(self, fn, on_done, on_error) -> None:
+        def target() -> None:
+            try:
+                result = fn()
+            except Exception as exc:
+                self._bridge.finished.emit(on_error, exc)
+            else:
+                self._bridge.finished.emit(on_done, result)
+
+        threading.Thread(target=target, name="backend-prep", daemon=True).start()
+
+    def _deliver_backend_result(self, callback: Any, argument: Any) -> None:
+        callback(argument)
+
+    def _run_release_in_thread(self, fn) -> None:
+        threading.Thread(target=fn, name="backend-release", daemon=True).start()
 
     def _update_progress_display(self) -> None:
         """Updates the progress display via signal."""
@@ -824,7 +905,8 @@ class ApplicationController(QObject):
 
         logging.info(f"Initiating retry for task {task_id}...")
         if current_task and str(current_task.id) == task_id:
-            self._generation_service.stop(wait=True)
+            self._invalidate_backend_prep()
+            self._generation_service.stop()
 
         updated_task = self._queue_service.retry_task(task_id)
         if updated_task:
@@ -839,6 +921,7 @@ class ApplicationController(QObject):
         self._shutdown_done = True
         logging.info("Shutting down ApplicationController...")
         self._is_stopped = True
+        self._invalidate_backend_prep()
         self._terminate_prep_worker()
         self._cleanup_active_resources()
         self._generation_service.stop(wait=True)
@@ -887,35 +970,54 @@ class ApplicationController(QObject):
         """
         Frees local-engine resources that no remaining task needs.
 
+        The decision is made on the GUI thread; the slow part (``docker compose down``,
+        unloading the model) runs in the background so the window never freezes.
         Piper's container is stopped only if this app run actually started a Piper task
         (Docker is never touched for Edge/XTTS-only sessions); the XTTS model is
         unloaded from VRAM only if it is loaded.
         """
-        if self._piper_setup_service is not None and self._piper_used \
-                and not self._has_unfinished_task_for(TtsBackend.PIPER):
+        stop_piper = (
+            self._piper_setup_service is not None and self._piper_used
+            and not self._has_unfinished_task_for(TtsBackend.PIPER)
+        )
+        unload_xtts = (
+            self._xtts_setup_service is not None
+            and not self._has_unfinished_task_for(TtsBackend.XTTS)
+        )
+        if stop_piper:
             self._piper_used = False
-            try:
-                logging.info("No Piper tasks remaining. Auto-stopping Piper container...")
-                self._piper_setup_service.stop_container()
-            except Exception as exc:
-                logging.warning("Auto-stopping Piper container failed: %s", exc)
+            self._backends_needed.discard(TtsBackend.PIPER)
+        if unload_xtts:
+            self._backends_needed.discard(TtsBackend.XTTS)
+        if not (stop_piper or unload_xtts):
+            return
 
-        if self._xtts_setup_service is not None \
-                and not self._has_unfinished_task_for(TtsBackend.XTTS):
-            try:
-                if self._xtts_setup_service.is_model_loaded():
-                    logging.info("No XTTS tasks remaining. Unloading XTTS model from VRAM...")
-                    self._xtts_setup_service.unload_model()
-            except Exception as exc:
-                logging.warning("Auto-unloading XTTS model failed: %s", exc)
+        def release() -> None:
+            with self._backend_lock:
+                if stop_piper and TtsBackend.PIPER not in self._backends_needed:
+                    try:
+                        logging.info("No Piper tasks remaining. Auto-stopping Piper container...")
+                        self._piper_setup_service.stop_container()
+                    except Exception as exc:
+                        logging.warning("Auto-stopping Piper container failed: %s", exc)
+                if unload_xtts and TtsBackend.XTTS not in self._backends_needed:
+                    try:
+                        if self._xtts_setup_service.is_model_loaded():
+                            logging.info("No XTTS tasks remaining. Unloading XTTS model from VRAM...")
+                            self._xtts_setup_service.unload_model()
+                    except Exception as exc:
+                        logging.warning("Auto-unloading XTTS model failed: %s", exc)
+
+        self._release_runner(release)
 
     def stop_generation(self) -> None:
         """Stops the audio generation and discards every task (explicit "clear queue")."""
         self._is_stopped = True
         logging.info("Stopping all generation tasks...")
 
+        self._invalidate_backend_prep()
         self._terminate_prep_worker()
-        self._generation_service.stop(wait=True)
+        self._generation_service.stop()
         self._assembly_service.stop()
 
         discarded_tasks = self._queue_service.get_all_tasks()
@@ -932,8 +1034,9 @@ class ApplicationController(QObject):
         logging.info("Cancelling current task %s...", task.id if task else None)
         self._is_stopped = True
 
+        self._invalidate_backend_prep()
         self._terminate_prep_worker()
-        self._generation_service.stop(wait=True)
+        self._generation_service.stop()
         self._assembly_service.stop()
 
         self._cleanup_temp_files()
@@ -1009,8 +1112,7 @@ class ApplicationController(QObject):
                 first_task = tasks[0]
                 first_task.status = TaskStatus.PAUSED
                 first_task.message = "Paused"
-                self._queue_service._current_task = first_task
-                self._queue_service.statusChanged.emit(True)
+                self._queue_service.restore_current_task(first_task)
                 self.taskAdded.emit(first_task)
                 self.taskUpdated.emit(first_task)
                 pending_tasks = tasks[1:]
@@ -1020,7 +1122,7 @@ class ApplicationController(QObject):
             for task in pending_tasks:
                 task.status = TaskStatus.PENDING
                 task.message = "Waiting..."
-                self._queue_service._task_queue.append(task)
+                self._queue_service.restore_pending_task(task)
                 self.taskAdded.emit(task)
 
             for task in failed_tasks:
@@ -1028,6 +1130,8 @@ class ApplicationController(QObject):
                 self.taskAdded.emit(task)
 
             self._emit_global_progress()
+            # Restored pending tasks must run without waiting for the user to add a new one.
+            self._process_queue()
         except Exception as e:
             logging.error(f"Error restoring state: {e}", exc_info=True)
 
