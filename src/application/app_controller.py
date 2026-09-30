@@ -30,6 +30,10 @@ from src.application.services.assembly_service import AssemblyService
 from src.application.services.persistence_service import PersistenceService
 from src.application.services.piper_setup_service import PiperSetupService
 from src.application.services.xtts_setup_service import XttsSetupService
+from src.application.progress_restorer import ProgressRestorer, load_chunks
+from src.application.backend_coordinator import BackendCoordinator
+from src.constants import COMPLETION_POLL_MS, MAX_RETRY_SWEEPS, PROGRESS_REFRESH_MS, RETRY_SWEEP_DELAY_MS
+from src.application.preparation_worker import PreparationWorker  # noqa: F401  (re-exported)
 from src.infrastructure.logging_config import set_correlation_id
 
 
@@ -41,159 +45,6 @@ class _BackendBridge(QObject):
     finished = pyqtSignal(object, object)  # (callback, argument)
 
 
-class PreparationWorker(QThread):
-    """
-    Worker thread to handle file reading, text processing, and chunking
-    to avoid blocking the main UI thread.
-    """
-    finished = pyqtSignal(list, str, str)  # chunks, text_dir, audio_dir
-    error = pyqtSignal(str)
-    
-    def __init__(
-            self,
-            task_id: str,
-            config: ProjectConfig,
-            file_manager: FileManager,
-            text_processor: TextProcessor,
-            text_chunker: TextChunker
-    ) -> None:
-        """Initialize the worker."""
-        super().__init__()
-        self.task_id = task_id
-        self.config = config
-        self.file_manager = file_manager
-        self.text_processor = text_processor
-        self.text_chunker = text_chunker
-
-        
-    @staticmethod
-    def resolve_workspace_dir(config: ProjectConfig) -> str:
-        """
-        Where temporary text/audio directories are created.
-
-        Never the input file's directory (it may be read-only media, and the user's
-        folder should not be cluttered): the output directory if writable, otherwise
-        the system temp directory.
-        """
-        output_dir = Path(config.output_dir_path).expanduser() if config.output_dir_path else None
-        if output_dir is not None and output_dir.is_dir() and os.access(output_dir, os.W_OK | os.X_OK):
-            return str(output_dir)
-        return tempfile.gettempdir()
-
-    def run(self) -> None:
-        """Execute the preparation tasks."""
-        # Set correlation ID for this worker thread
-        set_correlation_id(self.task_id)
-
-        
-        try:
-            logging.info(f"Starting preparation for input: {self.config.input_file_path}")
-
-            
-            # Read, Process, and Chunk incrementally to avoid OOM
-            chunks = []
-            chunk_num = 1
-            remaining = ""
-            buffer_size = 10 * 1024 * 1024  # 10MB
-
-            with open(self.config.input_file_path, 'r', encoding='utf-8') as f:
-                while True:
-                    if self.isInterruptionRequested():
-                        return
-
-                    block = f.read(buffer_size)
-                    if not block:
-                        break
-
-                    text = remaining + block
-                    # Ensure we don't split words across buffers
-                    if len(block) == buffer_size:
-                        last_space = max(text.rfind(' '), text.rfind('\n'))
-                        if last_space != -1:
-                            to_chunk = text[:last_space]
-                            remaining = text[last_space:]
-                        else:
-                            # Fallback: process entire block if no space found
-                            to_chunk = text
-                            remaining = ""
-                    else:
-                        to_chunk = text
-                        remaining = ""
-
-                    if to_chunk.strip():
-                        processed = self.text_processor.process_text(to_chunk)
-                        if processed.strip():
-                            block_chunks = self.text_chunker.chunk_text(processed)
-                            for c in block_chunks:
-                                # Create new chunk because AudioChunk is frozen
-                                chunks.append(AudioChunk(
-                                    chunk_number=chunk_num,
-                                    text_content=c.text_content
-                                ))
-                                chunk_num += 1
-
-            if remaining.strip():
-                processed = self.text_processor.process_text(remaining)
-                if processed.strip():
-                    block_chunks = self.text_chunker.chunk_text(processed)
-                    for c in block_chunks:
-                        chunks.append(AudioChunk(
-                            chunk_number=chunk_num,
-                            text_content=c.text_content
-                        ))
-                        chunk_num += 1
-            
-            if not chunks:
-                 raise ValueError("No text chunks generated from input file.")
-
-            # Create directories
-            if self.isInterruptionRequested():
-                return
-
-            workspace_dir = self.resolve_workspace_dir(self.config)
-            ensure_free_space(
-                sum(len(c.text_content) for c in chunks),
-                workspace_dir,
-                self.config.output_dir_path,
-            )
-            text_dir = self.file_manager.create_timestamped_dir("text", workspace_dir)
-            audio_dir = self.file_manager.create_timestamped_dir("audio", workspace_dir)
-            
-            # Save chunks in parallel using ThreadPoolExecutor for faster I/O
-            executor = ThreadPoolExecutor(max_workers=4)
-            interrupted = False
-            try:
-                futures = []
-                for chunk in chunks:
-                    if self.isInterruptionRequested():
-                        interrupted = True
-                        break
-                    futures.append(executor.submit(self.file_manager.save_text_chunk, chunk, text_dir))
-                
-                if not interrupted:
-                    # Wait for all saving operations to complete
-                    for future in futures:
-                        if self.isInterruptionRequested():
-                            interrupted = True
-                            break
-                        future.result()
-            finally:
-                if interrupted:
-                    executor.shutdown(wait=False, cancel_futures=True)
-                else:
-                    executor.shutdown(wait=True)
-
-            if self.isInterruptionRequested():
-                return
-            
-            logging.info(f"Preparation complete. Generated {len(chunks)} chunks.")
-            self.finished.emit(chunks, text_dir, audio_dir)
-            
-        except Exception as e:
-            logging.error(f"Preparation failed: {e}", exc_info=True)
-            self.error.emit(str(e))
-
-
 class ApplicationController(QObject):
     """
     Central controller that orchestrates audio generation workflow.
@@ -202,7 +53,6 @@ class ApplicationController(QObject):
 
     progressUpdated = pyqtSignal(int, int, str, float) # processed, total, eta_str, chunks_per_sec
     assemblyProgressUpdated = pyqtSignal(float, float)
-    generationCompleted = pyqtSignal(str)
     errorOccurred = pyqtSignal(str)
     globalProgressUpdated = pyqtSignal(float, str)  # percentage, eta_string
 
@@ -235,9 +85,7 @@ class ApplicationController(QObject):
         self._generation_service = generation_service
         self._assembly_service = assembly_service
         self._persistence_service = persistence_service
-        self._piper_setup_service = piper_setup_service
-        self._xtts_setup_service = xtts_setup_service
-        self._piper_used = False
+        self._backends = BackendCoordinator(piper_setup_service, xtts_setup_service)
         self._shutdown_done = False
 
         # Docker / GPU operations never run on the GUI thread. The runner executes
@@ -248,11 +96,6 @@ class ApplicationController(QObject):
         self._backend_runner: Callable[[Callable[[], Any], Callable[[Any], None], Callable[[Exception], None]], None] = \
             self._run_backend_in_thread
         self._release_runner: Callable[[Callable[[], None]], None] = self._run_release_in_thread
-        self._backend_lock = threading.Lock()
-        self._prep_token = 0
-        # Backends a started/queued task needs; read by the release thread so it never
-        # stops a backend that a new task has just begun to use.
-        self._backends_needed: set = set()
 
         # Callable (backend: TtsBackend) -> TtsGeneratorProtocol
         # Allows dynamic switching of the TTS generator per task.
@@ -284,6 +127,34 @@ class ApplicationController(QObject):
 
         self._completion_monitor_timer: Optional[QTimer] = None
 
+    @property
+    def _piper_setup_service(self) -> Optional[PiperSetupService]:
+        return self._backends.service(TtsBackend.PIPER)
+
+    @_piper_setup_service.setter
+    def _piper_setup_service(self, service: Optional[PiperSetupService]) -> None:
+        self._backends.set_service(TtsBackend.PIPER, service)
+
+    @property
+    def _xtts_setup_service(self) -> Optional[XttsSetupService]:
+        return self._backends.service(TtsBackend.XTTS)
+
+    @_xtts_setup_service.setter
+    def _xtts_setup_service(self, service: Optional[XttsSetupService]) -> None:
+        self._backends.set_service(TtsBackend.XTTS, service)
+
+    @property
+    def _piper_used(self) -> bool:
+        return TtsBackend.PIPER in self._backends.used
+
+    @_piper_used.setter
+    def _piper_used(self, value: bool) -> None:
+        (self._backends.used.add if value else self._backends.used.discard)(TtsBackend.PIPER)
+
+    @property
+    def _backends_needed(self) -> Set[TtsBackend]:
+        return self._backends.needed
+
     def _setup_service_subscriptions(self) -> None:
         """Sets up subscriptions to queue service events."""
         self._queue_service.subscribe_task_added(self.taskAdded.emit)
@@ -298,7 +169,6 @@ class ApplicationController(QObject):
         # Generation Service signals
         self._generation_service.chunkGenerated.connect(self._on_chunk_generated)
         self._generation_service.chunkFailed.connect(self._on_chunk_failed)
-        self._generation_service.batchGenerated.connect(self._on_batch_generated)
         self._generation_service.batchFailed.connect(self._on_batch_failed)
         self._generation_service.errorOccurred.connect(self.errorOccurred.emit)
         self._generation_service.generationAborted.connect(self._on_generation_aborted)
@@ -453,12 +323,8 @@ class ApplicationController(QObject):
             self._begin_generation(task)
             return
 
-        self._prep_token += 1
-        token = self._prep_token
-        self._backends_needed.add(backend)
-        if backend == TtsBackend.PIPER:
-            self._piper_used = True
-        label = "Piper (Docker)" if backend == TtsBackend.PIPER else "XTTS-v2"
+        token = self._backends.begin(backend)
+        label = self._backends.label(backend)
         self._queue_service.update_task_status(TaskStatus.PROCESSING, f"Preparing {label}...")
 
         def on_done(_result: Any) -> None:
@@ -477,23 +343,12 @@ class ApplicationController(QObject):
     def _make_backend_preparation(self, task: GenerationTask) -> Optional[Callable[[], Any]]:
         """Returns the blocking readiness routine for the task's backend, or None if none is needed."""
         cfg = task.config
-        if cfg.tts_backend == TtsBackend.PIPER and self._piper_setup_service is not None:
-            service = self._piper_setup_service
-        elif cfg.tts_backend == TtsBackend.XTTS and self._xtts_setup_service is not None:
-            service = self._xtts_setup_service
-        else:
-            return None
-
-        def prepare() -> Any:
-            with self._backend_lock:
-                return service.ensure_ready(cfg.language, cfg.gender)
-
-        return prepare
+        return self._backends.prepare_callable(cfg.tts_backend, cfg.language, cfg.gender)
 
     def _is_prep_current(self, token: int, task: GenerationTask) -> bool:
         current = self._get_current_task()
         return (
-            token == self._prep_token
+            self._backends.is_current(token)
             and not self._is_stopped
             and current is not None
             and current.id == task.id
@@ -501,15 +356,14 @@ class ApplicationController(QObject):
 
     def _invalidate_backend_prep(self) -> None:
         """Makes any in-flight backend preparation ignore its result."""
-        self._prep_token += 1
+        self._backends.invalidate()
 
     def _begin_generation(self, task: GenerationTask) -> None:
         """Starts the GenerationService once the backend is known to be ready."""
-        if task.config.tts_backend == TtsBackend.XTTS:
-            logging.info(
-                "[XTTS] Starting generation with backend XTTS for task %s (lang=%s, voice=%s)",
-                task.id, task.config.language, getattr(task.config, 'voice_name', None),
-            )
+        logging.info(
+            "Starting generation: task %s, backend=%s, lang=%s",
+            task.id, task.config.tts_backend.value, task.config.language,
+        )
 
         self._generation_service.start_generation(
             task,
@@ -517,7 +371,7 @@ class ApplicationController(QObject):
             self._audio_dir
         )
 
-        self._progress_timer.start(500)
+        self._progress_timer.start(PROGRESS_REFRESH_MS)
         self._monitor_completion()
 
     def _on_generation_aborted(self, reason: str) -> None:
@@ -685,12 +539,6 @@ class ApplicationController(QObject):
         if self._persistence_service.save_manifest(self._audio_dir, manifest_data):
             self._last_manifest_write = now
 
-    def _on_batch_generated(self, results: List[tuple]) -> None:
-        """Callback for batch generation results to ensure no chunks are missed."""
-        # Individual on_chunk_generated handles most logic, but we can double check here
-        # or use this to further reduce signals if we wanted to.
-        pass
-
     def _on_batch_failed(self, batch: List[AudioChunk], error_msg: str) -> None:
         """
         Callback when a batch fails after per-chunk retries.
@@ -705,8 +553,8 @@ class ApplicationController(QObject):
             logging.error("All chunks in task failed permanently after retry sweeps — failing task.")
             self._handle_task_failure(f"Task synthesis error: {error_msg}")
 
-    MAX_RETRY_SWEEPS = 5
-    RETRY_SWEEP_DELAY_MS = 3000
+    MAX_RETRY_SWEEPS = MAX_RETRY_SWEEPS
+    RETRY_SWEEP_DELAY_MS = RETRY_SWEEP_DELAY_MS
 
     def _monitor_completion(self) -> None:
         """
@@ -719,7 +567,7 @@ class ApplicationController(QObject):
 
         self._completion_monitor_timer = QTimer()
         self._completion_monitor_timer.timeout.connect(self._check_completion)
-        self._completion_monitor_timer.start(1000)
+        self._completion_monitor_timer.start(COMPLETION_POLL_MS)
 
     def _stop_completion_monitor(self) -> None:
         if self._completion_monitor_timer:
@@ -844,12 +692,8 @@ class ApplicationController(QObject):
         """
         Core assembly workflow executed in a separate daemon thread.
 
-        ISSUE-13 FIX:
-            Check ``_is_stopped`` before calling ``_mark_task_completed`` and
-            ``_cleanup_temp_files``.  Without this guard, a race exists where the
-            pipeline is stopped externally *while* assembly is running; the
-            daemon thread would then call ``_mark_task_completed`` which emits
-            signals and mutates the (now-dead) queue service.
+        The result is handed to the GUI thread, which ignores it if the pipeline was
+        stopped while assembly was running.
         """
         error: Optional[Exception] = None
         try:
@@ -909,7 +753,7 @@ class ApplicationController(QObject):
 
         if current_task and str(current_task.id) == task_id:
             if current_task.status in (TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.STOPPED):
-                if not self._generation_service._thread_manager or current_task.status in (TaskStatus.FAILED, TaskStatus.STOPPED):
+                if not self._generation_service.has_worker_pool or current_task.status in (TaskStatus.FAILED, TaskStatus.STOPPED):
                     current_task.update_status(TaskStatus.PENDING, "Resuming...")
                     self._start_task(current_task)
                     return
@@ -968,30 +812,7 @@ class ApplicationController(QObject):
             current_task.message = "Paused"
             
         self._save_state(force=True)
-        self._stop_piper_on_app_shutdown()
-        self._stop_xtts_on_app_shutdown()
-
-    def _stop_piper_on_app_shutdown(self) -> None:
-        """Stops Piper Docker container on application exit to release system resources."""
-        if self._piper_setup_service is None:
-            return
-        try:
-            logging.info("Application shutting down: stopping Piper Docker container...")
-            self._piper_setup_service.stop_container()
-        except Exception as exc:
-            logging.warning("Failed to stop Piper container on shutdown: %s", exc)
-
-    def _stop_xtts_on_app_shutdown(self) -> None:
-        """Unloads XTTS model from VRAM on application exit to release GPU memory."""
-        if self._xtts_setup_service is None:
-            return
-        try:
-            if not self._xtts_setup_service.is_model_loaded():
-                return
-            logging.info("Application shutting down: unloading XTTS model from VRAM...")
-            self._xtts_setup_service.unload_model()
-        except Exception as exc:
-            logging.warning("Failed to unload XTTS model on shutdown: %s", exc)
+        self._backends.shutdown()
 
     def _has_unfinished_task_for(self, backend: TtsBackend) -> bool:
         """True if a PENDING/PROCESSING task still needs the given backend."""
@@ -1006,44 +827,10 @@ class ApplicationController(QObject):
         Frees local-engine resources that no remaining task needs.
 
         The decision is made on the GUI thread; the slow part (``docker compose down``,
-        unloading the model) runs in the background so the window never freezes.
-        Piper's container is stopped only if this app run actually started a Piper task
-        (Docker is never touched for Edge/XTTS-only sessions); the XTTS model is
-        unloaded from VRAM only if it is loaded.
+        unloading the model) runs in the background so the window never freezes. Piper's
+        container is stopped only if this app run actually started a Piper task.
         """
-        stop_piper = (
-            self._piper_setup_service is not None and self._piper_used
-            and not self._has_unfinished_task_for(TtsBackend.PIPER)
-        )
-        unload_xtts = (
-            self._xtts_setup_service is not None
-            and not self._has_unfinished_task_for(TtsBackend.XTTS)
-        )
-        if stop_piper:
-            self._piper_used = False
-            self._backends_needed.discard(TtsBackend.PIPER)
-        if unload_xtts:
-            self._backends_needed.discard(TtsBackend.XTTS)
-        if not (stop_piper or unload_xtts):
-            return
-
-        def release() -> None:
-            with self._backend_lock:
-                if stop_piper and TtsBackend.PIPER not in self._backends_needed:
-                    try:
-                        logging.info("No Piper tasks remaining. Auto-stopping Piper container...")
-                        self._piper_setup_service.stop_container()
-                    except Exception as exc:
-                        logging.warning("Auto-stopping Piper container failed: %s", exc)
-                if unload_xtts and TtsBackend.XTTS not in self._backends_needed:
-                    try:
-                        if self._xtts_setup_service.is_model_loaded():
-                            logging.info("No XTTS tasks remaining. Unloading XTTS model from VRAM...")
-                            self._xtts_setup_service.unload_model()
-                    except Exception as exc:
-                        logging.warning("Auto-unloading XTTS model failed: %s", exc)
-
-        self._release_runner(release)
+        self._backends.release_idle(self._has_unfinished_task_for, self._release_runner)
 
     def stop_generation(self) -> None:
         """Stops the audio generation and discards every task (explicit "clear queue")."""
@@ -1174,101 +961,23 @@ class ApplicationController(QObject):
     def _restore_progress_from_disk(self, task: GenerationTask) -> bool:
         """Attempts to restore task chunks and progress from physical files on disk."""
         try:
-            text_path = Path(task.text_dir)
-            audio_path = Path(task.audio_dir)
-            
-            txt_files = list(text_path.glob("*.txt"))
-            if not txt_files:
+            chunks = load_chunks(task.text_dir)
+            if not chunks:
                 return False
-                
-            chunks_data = []
-            for f in txt_files:
-                try:
-                    num = int(f.stem)
-                    chunks_data.append((num, f))
-                except ValueError:
-                    continue
-            
-            if not chunks_data:
-                return False
-                
-            chunks_data.sort(key=lambda x: x[0])
-            
-            chunks = []
-            for num, f in chunks_data:
-                try:
-                    with open(f, "r", encoding="utf-8") as file:
-                        content = file.read()
-                    chunks.append(AudioChunk(
-                        chunk_number=num,
-                        text_content=content,
-                        text_file_path=str(f.absolute())
-                    ))
-                except Exception as e:
-                    logging.error(f"Failed to read restored chunk file {f}: {e}")
-                    return False
-            
-            self._chunks = chunks
+            restored = ProgressRestorer(self._assembly_service, self._duration_reader).restore(
+                chunks, task.audio_dir, task.config.speed, str(task.id)
+            )
+            self._chunks = restored.chunks
+            self._audio_files = restored.audio_files
             self._text_dir = task.text_dir
             self._audio_dir = task.audio_dir
             self._last_manifest_write = float('-inf')
-            self._audio_files = [None] * len(chunks)
             self._retry_sweep_count = 0
             self._retry_in_progress = False
-            
-            self._assembly_service.reset(len(chunks))
-            
-            for idx, c in enumerate(self._chunks):
-                chunk_audio = audio_path / f"{c.chunk_number}.mp3"
-                if chunk_audio.exists() and chunk_audio.stat().st_size > 0:
-                    duration = self._duration_reader(str(chunk_audio))
-                    if duration > 0.0:
-                        self._audio_files[idx] = str(chunk_audio.absolute())
-                        self._chunks[idx] = c.with_audio_path(str(chunk_audio.absolute()), duration)
-                        
-                        batch_index = self._assembly_service.mark_chunk_ready(idx, duration)
-                        if batch_index is not None:
-                            part_path = audio_path / f"part_{batch_index}.mp3"
-                            part_dur = (
-                                self._duration_reader(str(part_path))
-                                if (part_path.exists() and part_path.stat().st_size > 0) else 0.0
-                            )
-                            if part_dur > 0.0:
-                                self._assembly_service.restore_batch_result(
-                                    batch_index, str(part_path)
-                                )
-                            else:
-                                if part_path.exists():
-                                    try:
-                                        part_path.unlink()
-                                        logging.warning(f"Removed corrupt/empty batch part file on restore: {part_path}")
-                                    except Exception as e:
-                                        logging.error(f"Failed to remove corrupt part file {part_path}: {e}")
 
-                                start_idx = batch_index * self._assembly_service.BATCH_SIZE
-                                end_idx = min(start_idx + self._assembly_service.BATCH_SIZE, len(self._audio_files))
-                                batch_files = self._audio_files[start_idx:end_idx]
-                                self._assembly_service.submit_batch_by_index(
-                                    batch_index,
-                                    batch_files,
-                                    self._audio_dir,
-                                    task.config.speed,
-                                    str(task.id)
-                                )
-                    else:
-                        # Corrupted or zero-duration MP3 file — remove so it can be re-synthesized cleanly
-                        try:
-                            chunk_audio.unlink()
-                            logging.warning(f"Removed corrupt/empty chunk file on restore: {chunk_audio}")
-                        except Exception as e:
-                            logging.error(f"Failed to remove corrupt chunk file {chunk_audio}: {e}")
-            
-            logging.info(f"Restored task progress: {sum(1 for f in self._audio_files if f is not None)}/{len(chunks)} chunks ready.")
-            
-            self._queue_service.update_task_status(
-                TaskStatus.PROCESSING,
-                "Resuming..."
-            )
+            ready = sum(1 for f in self._audio_files if f is not None)
+            logging.info(f"Restored task progress: {ready}/{len(self._chunks)} chunks ready.")
+            self._queue_service.update_task_status(TaskStatus.PROCESSING, "Resuming...")
             self._start_generation_process()
             return True
         except Exception as e:

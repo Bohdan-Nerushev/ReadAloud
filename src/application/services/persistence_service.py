@@ -133,22 +133,6 @@ class PersistenceService:
                         pass
                 return False
 
-    def load_manifest(self, directory: str) -> Optional[Dict[str, Any]]:
-        """
-        Loads manifest metadata (manifest.json) from the specified directory.
-        """
-        try:
-            manifest_path = Path(directory) / "manifest.json"
-            if not manifest_path.exists():
-                return None
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-            return None
-        except Exception as e:
-            logging.warning(f"Failed to load manifest from {directory}: {e}")
-            return None
-
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

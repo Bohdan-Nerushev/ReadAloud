@@ -1,16 +1,9 @@
 """
 Generation Service.
 
-Orchestrates audio generation workflow: delegates low-level synthesis to
-AudioGenerator and manages concurrency via ThreadManager.
-
-Changes vs. original:
-    - _generate_batch_safe now handles partial batch success (BUG-2 consequence):
-      individual None results from AudioGenerator are filtered out; only the
-      successful chunks are reported. This prevents a single failed chunk from
-      stopping the entire pipeline.
-    - Added _is_stopped guard before each batch submission.
-    - Improved logging for observability.
+Orchestrates the audio generation workflow: delegates synthesis to a TTS generator and
+manages concurrency via ThreadManager. A chunk that fails permanently is reported and
+skipped; it never aborts the rest of the pipeline.
 """
 
 import functools
@@ -20,12 +13,31 @@ from typing import List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from src.constants import DEFAULT_MAX_CHUNK_RETRIES, GENERATION_BATCH_SIZE, MAX_PARALLEL_BATCHES
 from src.domain.exceptions import is_fatal_setup_error
 from src.domain.models import GenerationTask, AudioChunk
+from src.domain.retry_budget import RetryBudget
 from src.domain.tts_generator_protocol import TtsGeneratorProtocol
 from src.infrastructure.thread_manager import ThreadManager
 from src.infrastructure.progress_tracker import ProgressTracker
 from src.infrastructure.logging_config import set_correlation_id
+
+
+def plan_concurrency(thread_count: int, batch_count: int) -> Tuple[int, int]:
+    """
+    Splits the requested request concurrency between parallel batches and per-batch workers.
+
+    ``thread_count`` is the total number of synthesis requests allowed in flight. With
+    enough batches each batch gets one worker; with few batches the spare concurrency
+    goes into the batch, so the product never exceeds ``thread_count`` (it used to be
+    ``thread_count`` batches x ``thread_count`` workers).
+
+    Returns:
+        (parallel_batches, workers_per_batch)
+    """
+    total = max(1, min(thread_count, MAX_PARALLEL_BATCHES))
+    parallel_batches = max(1, min(total, batch_count))
+    return parallel_batches, max(1, total // parallel_batches)
 
 
 class GenerationService(QObject):
@@ -47,7 +59,11 @@ class GenerationService(QObject):
     generationAborted = pyqtSignal(str)                   # unrecoverable batch-level error (real reason)
 
     # Chunks per batch submitted to the thread pool
-    BATCH_GEN_SIZE = 10
+    BATCH_GEN_SIZE = GENERATION_BATCH_SIZE
+
+    @classmethod
+    def _batch_count(cls, chunk_count: int) -> int:
+        return -(-chunk_count // cls.BATCH_GEN_SIZE)
 
     def __init__(self, audio_generator: TtsGeneratorProtocol) -> None:
         """Initialize the GenerationService."""
@@ -73,7 +89,16 @@ class GenerationService(QObject):
     @property
     def last_error(self) -> Optional[str]:
         """Most recent per-chunk error reported by the active generator, if any."""
-        return getattr(self._audio_generator, "last_error", None)
+        return self._audio_generator.last_error
+
+    @property
+    def has_worker_pool(self) -> bool:
+        """True once a generation has started and its worker pool exists."""
+        return self._thread_manager is not None
+
+    @staticmethod
+    def _pool_size(task: GenerationTask) -> int:
+        return max(1, min(task.config.effective_thread_count, MAX_PARALLEL_BATCHES))
 
     def _next_generation_id(self) -> int:
         with self._id_lock:
@@ -110,16 +135,17 @@ class GenerationService(QObject):
             self._thread_manager.stop()
         self._next_generation_id()
         self._set_generator_paused(False)
-        if hasattr(self._audio_generator, "last_error"):
-            self._audio_generator.last_error = None
+        self._audio_generator.last_error = None
 
         self._current_task = task
         self._chunks = chunks
         self._output_dir = output_dir
         self._is_stopped = False
 
-        self._thread_manager = ThreadManager(thread_count=task.config.effective_thread_count)
+        self._thread_manager = ThreadManager(thread_count=self._pool_size(task))
         self._thread_manager.start()
+        pending = sum(1 for c in chunks if c.audio_file_path is None)
+        self._audio_generator.set_retry_budget(RetryBudget.for_chunks(pending))
 
         completed_count = sum(1 for c in chunks if c.audio_file_path is not None)
         self._progress_tracker = ProgressTracker(total_chunks=len(chunks))
@@ -142,10 +168,12 @@ class GenerationService(QObject):
             self._progress_tracker.begin_retry(c.chunk_number for c in chunks_to_retry)
 
         correlation_id = str(task.id)
-        max_workers = min(task.config.effective_thread_count, len(chunks_to_retry))
+        _, max_workers = plan_concurrency(
+            task.config.effective_thread_count, self._batch_count(len(chunks_to_retry))
+        )
 
         if not self._thread_manager:
-            self._thread_manager = ThreadManager(thread_count=task.config.effective_thread_count)
+            self._thread_manager = ThreadManager(thread_count=self._pool_size(task))
             self._thread_manager.start()
 
         for i in range(0, len(chunks_to_retry), self.BATCH_GEN_SIZE):
@@ -163,7 +191,7 @@ class GenerationService(QObject):
                 task.config.gender,
                 correlation_id,
                 max_workers,
-                10
+                DEFAULT_MAX_CHUNK_RETRIES,
             )
 
     def pause(self) -> bool:
@@ -186,12 +214,10 @@ class GenerationService(QObject):
 
     def _set_generator_paused(self, paused: bool) -> None:
         """Propagates pause/resume into a batch that is already running inside the generator."""
-        method = getattr(self._audio_generator, "pause" if paused else "resume", None)
-        if callable(method):
-            try:
-                method()
-            except Exception as exc:
-                logging.warning("Generator pause/resume failed: %s", exc)
+        try:
+            (self._audio_generator.pause if paused else self._audio_generator.resume)()
+        except Exception as exc:
+            logging.warning("Generator pause/resume failed: %s", exc)
 
     def is_paused(self) -> bool:
         """Returns True if generation is currently paused."""
@@ -207,12 +233,10 @@ class GenerationService(QObject):
 
     def _cancel_generator(self) -> None:
         """Asks the active generator to abort in-flight batches (cooperative cancellation)."""
-        cancel = getattr(self._audio_generator, "cancel", None)
-        if callable(cancel):
-            try:
-                cancel()
-            except Exception as exc:
-                logging.warning("Generator cancel() failed: %s", exc)
+        try:
+            self._audio_generator.cancel()
+        except Exception as exc:
+            logging.warning("Generator cancel() failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Progress queries
@@ -246,7 +270,9 @@ class GenerationService(QObject):
 
         correlation_id = str(self._current_task.id)
         pending_chunks = [c for c in self._chunks if c.audio_file_path is None]
-        max_workers = min(self._current_task.config.effective_thread_count, 10)
+        _, max_workers = plan_concurrency(
+            self._current_task.config.effective_thread_count, self._batch_count(len(pending_chunks))
+        )
 
         logging.info(
             f"Submitting {len(pending_chunks)} pending chunk(s) "
@@ -295,7 +321,7 @@ class GenerationService(QObject):
             gender: str,
             correlation_id: str,
             max_workers: int,
-            max_retries: int = 10,
+            max_retries: int = DEFAULT_MAX_CHUNK_RETRIES,
             generation_id: Optional[int] = None,
             output_dir: Optional[str] = None,
     ) -> None:

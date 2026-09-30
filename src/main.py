@@ -143,14 +143,6 @@ class ReadAloudApplication:
 
         return configs
 
-    def _build_config_from_ui(
-            self
-    ) -> ProjectConfig:
-        """Deprecated fallback method for single config creation."""
-        configs = self._build_configs_from_ui()
-        return configs[0]
-
-
     def _on_progress_updated(
             self,
             completed: int,

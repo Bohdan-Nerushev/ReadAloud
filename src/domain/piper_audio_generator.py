@@ -38,7 +38,8 @@ from src.domain.exceptions import (
     TransientGenerationException,
     is_fatal_setup_error,
 )
-from src.domain.cancellable_batch import CancellableBatchMixin
+from src.domain.async_loop_host import AsyncLoopHostMixin
+from src.domain.base_generator import BaseAudioGenerator
 from src.domain.models import AudioChunk
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,7 @@ def _is_piper_transient_error(exc: BaseException) -> bool:
     return any(kw in msg for kw in transient_keywords)
 
 
-class PiperAudioGenerator(CancellableBatchMixin):
+class PiperAudioGenerator(AsyncLoopHostMixin, BaseAudioGenerator):
     """
     TTS generator that synthesises audio via a locally running wyoming-piper container.
 
@@ -140,6 +141,7 @@ class PiperAudioGenerator(CancellableBatchMixin):
     # Sentinel used to stop async workers cleanly
     _STOP_SENTINEL = object()
     MAX_CONSECUTIVE_REFUSALS = 3
+    _LOOP_THREAD_NAME = "PiperAudioGenerator-AsyncLoop"
 
     def __init__(
             self,
@@ -162,64 +164,20 @@ class PiperAudioGenerator(CancellableBatchMixin):
         self._connection_timeout = connection_timeout
         self._synthesis_timeout = synthesis_timeout
 
-        self._init_lock = threading.Lock()
+        self._init_loop_host()
         self._init_cancellation()
-        self._loop_ready = threading.Event()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._loop_thread: Optional[threading.Thread] = None
         # Piper is single-threaded per container: max_concurrency=1
         self._semaphore: Optional[asyncio.Semaphore] = None
 
         self.ensure_loop_running()
 
-    # ------------------------------------------------------------------
-    # Loop lifecycle (mirrors AudioGenerator)
-    # ------------------------------------------------------------------
-
-    def ensure_loop_running(self) -> None:
-        """Ensures the background asyncio event loop thread is active."""
-        with self._init_lock:
-            if (
-                self._loop is None
-                or not self._loop.is_running()
-                or self._loop_thread is None
-                or not self._loop_thread.is_alive()
-            ):
-                self._loop_ready.clear()
-                self._loop = asyncio.new_event_loop()
-                self._loop_thread = threading.Thread(
-                    target=self._start_background_loop,
-                    args=(self._loop,),
-                    daemon=True,
-                    name="PiperAudioGenerator-AsyncLoop",
-                )
-                self._loop_thread.start()
-                if not self._loop_ready.wait(timeout=10.0):
-                    raise RuntimeError(
-                        "PiperAudioGenerator: background asyncio loop did not start within 10 seconds"
-                    )
-
-    def _start_background_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        asyncio.set_event_loop(loop)
+    def _on_loop_started(self) -> None:
         # max_concurrency=1: one synthesis at a time (Piper is single-threaded)
         self._semaphore = asyncio.Semaphore(1)
-        self._loop_ready.set()
-        loop.run_forever()
 
     # ------------------------------------------------------------------
     # Public interface (implements TtsGeneratorProtocol)
     # ------------------------------------------------------------------
-
-    def generate_audio(
-            self,
-            chunk: AudioChunk,
-            language: str,
-            gender: str,
-            output_dir: str,
-    ) -> Tuple[str, float]:
-        """Generates audio for a single chunk. Delegates to generate_audio_batch."""
-        results = self.generate_audio_batch([chunk], language, gender, output_dir)
-        return results[0]
 
     def generate_audio_batch(
             self,
@@ -287,18 +245,6 @@ class PiperAudioGenerator(CancellableBatchMixin):
             if is_fatal_setup_error(e):
                 raise
             raise Exception(f"Piper batch generation failed: {str(e) or type(e).__name__}") from e
-
-    def close(self) -> None:
-        """Stops the background asyncio event loop."""
-        if hasattr(self, "_loop") and self._loop:
-            if self._loop.is_running():
-                self._loop.call_soon_threadsafe(self._loop.stop)
-            if hasattr(self, "_loop_thread") and self._loop_thread and self._loop_thread.is_alive():
-                self._loop_thread.join(timeout=2.0)
-            try:
-                self._loop.close()
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------
     # Internal async batch runner
@@ -467,6 +413,12 @@ class PiperAudioGenerator(CancellableBatchMixin):
 
             remaining = max_retries - attempt - 1
             if remaining > 0:
+                if not self._may_retry():
+                    logger.warning(
+                        "Retry budget exhausted; Piper chunk %d fails without further retries: %s",
+                        chunk.chunk_number, last_exception,
+                    )
+                    break
                 delay = min(60.0, backoff * (2 ** attempt) + random.uniform(0, backoff))
                 logger.warning(
                     "Transient Piper error on chunk %d (attempt %d/%d): %s. "
@@ -552,57 +504,3 @@ class PiperAudioGenerator(CancellableBatchMixin):
             raise PiperConnectionException(
                 f"Piper returned no audio data for voice '{voice}'."
             )
-
-    # ------------------------------------------------------------------
-    # WAV → MP3 conversion (runs in executor, not async)
-    # ------------------------------------------------------------------
-
-    def _convert_wav_to_mp3(self, wav_path: Path, mp3_tmp_path: Path) -> None:
-        """
-        Converts a WAV file to MP3 using pydub (which calls ffmpeg internally).
-
-        pydub is already in requirements.txt and wraps ffmpeg, so this approach
-        avoids adding a subprocess management layer while re-using existing deps.
-        """
-        try:
-            from pydub import AudioSegment
-            audio = AudioSegment.from_wav(str(wav_path))
-            audio.export(str(mp3_tmp_path), format="mp3", bitrate="128k")
-        finally:
-            # Always remove the temporary WAV regardless of conversion outcome
-            try:
-                wav_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    # ------------------------------------------------------------------
-    # Duration extraction
-    # ------------------------------------------------------------------
-
-    def _get_mp3_duration(self, file_path: str) -> float:
-        """Returns MP3 duration in seconds using mutagen."""
-        try:
-            from mutagen.mp3 import MP3
-            audio = MP3(file_path)
-            return float(audio.info.length)
-        except Exception:
-            return 0.0
-
-    def _get_file_duration_fast(self, file_path: str) -> float:
-        """Alias for _get_mp3_duration — provides a uniform interface across all TTS generators."""
-        return self._get_mp3_duration(file_path)
-
-    # ------------------------------------------------------------------
-    # Cleanup helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _cleanup_tmp_files(*paths: Optional[Path]) -> None:
-        """Silently removes temporary files to avoid leaving stale artifacts."""
-        for path in paths:
-            if path is not None:
-                try:
-                    if path.exists():
-                        path.unlink()
-                except Exception:
-                    pass

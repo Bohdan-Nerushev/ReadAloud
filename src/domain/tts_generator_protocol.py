@@ -2,13 +2,14 @@
 TTS Generator Protocol.
 
 Defines the structural interface that all TTS backend implementations must satisfy.
-Using Protocol (PEP 544) allows duck-typing without requiring a shared base class,
-which keeps EdgeTTS and Piper implementations fully independent.
+Using Protocol (PEP 544) allows duck-typing; ``BaseAudioGenerator`` supplies the shared
+defaults (no-op model lifecycle, pause/cancel plumbing) so engines only add what differs.
 """
 
 from typing import Callable, List, Optional, Protocol, Tuple, runtime_checkable
 
 from src.domain.models import AudioChunk
+from src.domain.retry_budget import RetryBudget
 
 
 @runtime_checkable
@@ -17,8 +18,7 @@ class TtsGeneratorProtocol(Protocol):
     Structural interface for TTS audio generators.
 
     Any class that provides these methods is considered a valid generator,
-    regardless of inheritance. Both AudioGenerator (Edge TTS) and
-    PiperAudioGenerator implement this Protocol implicitly.
+    regardless of inheritance. Edge, Piper and XTTS generators all satisfy it.
     """
 
     def generate_audio(
@@ -75,4 +75,31 @@ class TtsGeneratorProtocol(Protocol):
 
     def close(self) -> None:
         """Releases resources held by this generator (threads, connections, etc.)."""
+        ...
+
+    last_error: Optional[str]
+
+    @property
+    def is_model_loaded(self) -> bool:
+        """True while the engine keeps a model in memory (always False for Edge/Piper)."""
+        ...
+
+    def unload_model(self) -> None:
+        """Releases the resident model, if any (no-op for Edge/Piper)."""
+        ...
+
+    def pause(self) -> None:
+        """Holds back chunks that have not started yet."""
+        ...
+
+    def resume(self) -> None:
+        """Releases chunks held back by ``pause``."""
+        ...
+
+    def cancel(self) -> None:
+        """Aborts running batches as soon as possible."""
+        ...
+
+    def set_retry_budget(self, budget: Optional[RetryBudget]) -> None:
+        """Installs the shared retry allowance of the running generation."""
         ...

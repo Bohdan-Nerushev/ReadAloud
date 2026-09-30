@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, Mock, patch, call
 import pytest
 
 from src.application.services.generation_service import GenerationService
+from src.domain.base_generator import BaseAudioGenerator
 from src.domain.models import AudioChunk, GenerationTask, ProjectConfig, TtsBackend
 from src.domain.tts_generator_protocol import TtsGeneratorProtocol
 
@@ -38,13 +39,11 @@ def make_config(backend: TtsBackend = TtsBackend.PIPER) -> ProjectConfig:
         )
 
 
-class FakePiperGenerator:
-    """
-    A minimal TtsGeneratorProtocol-conforming fake for testing.
-    Satisfies the Protocol without inheriting from any class.
-    """
+class FakePiperGenerator(BaseAudioGenerator):
+    """A minimal TtsGeneratorProtocol-conforming fake: only synthesis is faked."""
 
     def __init__(self, results: List[Optional[Tuple[str, float]]]) -> None:
+        self._init_cancellation()
         self.results = results
         self.call_count = 0
 

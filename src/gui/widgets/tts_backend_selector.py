@@ -63,35 +63,6 @@ class _PiperCheckWorker(QObject):
         self.finished.emit(result)
 
 
-class _PiperActionWorker(QObject):
-    """Runs start/stop/pull operations in a QThread."""
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
-    status = pyqtSignal(str)
-
-    def __init__(self, setup_service: PiperSetupService, action: str, language: str, gender: str) -> None:
-        super().__init__()
-        self._service = setup_service
-        self._action = action
-        self._language = language
-        self._gender = gender
-        self._service.statusMessage.connect(self.status)
-
-    def run(self) -> None:
-        try:
-            if self._action == "pull_image":
-                self._service.pull_image()
-            elif self._action == "download_model":
-                self._service.download_model(self._language, self._gender)
-            elif self._action == "start":
-                self._service.start_container(self._language, self._gender)
-            elif self._action == "stop":
-                self._service.stop_container()
-            self.finished.emit()
-        except Exception as exc:
-            self.error.emit(str(exc))
-
-
 # ---------------------------------------------------------------------------
 # XTTS background workers
 # ---------------------------------------------------------------------------
@@ -165,9 +136,7 @@ class TtsBackendSelector(QWidget):
         self._last_xtts_result: Optional[XttsDiagnosticsResult] = None
 
         self._piper_check_thread: Optional[QThread] = None
-        self._piper_action_thread: Optional[QThread] = None
         self._piper_check_worker: Optional[_PiperCheckWorker] = None
-        self._piper_action_worker: Optional[_PiperActionWorker] = None
 
         self._xtts_check_thread: Optional[QThread] = None
         self._xtts_action_thread: Optional[QThread] = None
@@ -451,31 +420,6 @@ class TtsBackendSelector(QWidget):
     def _on_piper_check_finished(self, result: PiperPrerequisiteResult) -> None:
         self._last_piper_result = result
         self._update_piper_status_display(result)
-
-    def _run_piper_action(self, action: str) -> None:
-        if self._piper_action_thread and self._piper_action_thread.isRunning():
-            return
-        self._btn_piper_recheck.setEnabled(False)
-        self._piper_action_thread = QThread()
-        self._piper_action_worker = _PiperActionWorker(
-            self._piper_setup_service, action, self._current_language, self._current_gender
-        )
-        self._piper_action_worker.moveToThread(self._piper_action_thread)
-        self._piper_action_thread.started.connect(self._piper_action_worker.run)
-        self._piper_action_worker.finished.connect(self._on_piper_action_finished)
-        self._piper_action_worker.error.connect(self._on_piper_action_error)
-        self._piper_action_worker.status.connect(self._status_container.setText)
-        self._piper_action_worker.finished.connect(self._piper_action_thread.quit)
-        self._piper_action_thread.start()
-
-    def _on_piper_action_finished(self) -> None:
-        self._btn_piper_recheck.setEnabled(True)
-        self._run_piper_check()
-
-    def _on_piper_action_error(self, message: str) -> None:
-        self._btn_piper_recheck.setEnabled(True)
-        QMessageBox.critical(self, "Piper Error", message)
-        self._run_piper_check()
 
     # ------------------------------------------------------------------
     # XTTS check/action slots

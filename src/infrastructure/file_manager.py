@@ -7,7 +7,6 @@ This module handles file system operations including directory creation, file sa
 import shutil
 from pathlib import Path
 from datetime import datetime
-from functools import lru_cache
 from src.domain.models import AudioChunk
 
 
@@ -25,9 +24,9 @@ class FileManager:
         """Initialize the FileManager."""
         pass
 
-    @lru_cache(maxsize=128)
-    def _get_path(self, path_str: str) -> Path:
-        """Cached conversion of string to absolute Path object with expanded tildes."""
+    @staticmethod
+    def _get_path(path_str: str) -> Path:
+        """Absolute Path with expanded tildes. Not cached: directories come and go between calls."""
         return Path(path_str).expanduser().resolve()
     
     def create_timestamped_dir(

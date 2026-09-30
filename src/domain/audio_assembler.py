@@ -6,7 +6,6 @@ This module handles concatenation of individual audio chunks into a final MP3 fi
 
 import os
 import subprocess
-import atexit
 import signal
 import logging
 import uuid
@@ -16,22 +15,13 @@ import time
 from pathlib import Path
 from typing import Set, List, Optional
 
+from src.domain.process_registry import DEFAULT_PROCESS_REGISTRY, ProcessRegistry
 
 
-# Global registry for active subprocesses
-_ACTIVE_PROCESSES: Set[subprocess.Popen] = set()
 
-def _cleanup_processes():
-    """Kills all active subprocesses on exit."""
-    if _ACTIVE_PROCESSES:
-        logging.info(f"Cleaning up {len(_ACTIVE_PROCESSES)} active subprocesses...")
-        for p in list(_ACTIVE_PROCESSES):
-            try:
-                p.kill()
-            except Exception:
-                pass
-
-atexit.register(_cleanup_processes)
+# ffmpeg is considered hung after this long without any output.
+FFMPEG_HANG_TIMEOUT_SECONDS = 180.0
+FFMPEG_TERMINATE_GRACE_SECONDS = 3.0
 
 
 class AudioAssembler:
@@ -42,9 +32,11 @@ class AudioAssembler:
     """
     
     def __init__(
-            self
+            self,
+            process_registry: Optional[ProcessRegistry] = None,
     ) -> None:
         """Initialize the AudioAssembler."""
+        self._registry = process_registry if process_registry is not None else DEFAULT_PROCESS_REGISTRY
         self._active_processes: Set[subprocess.Popen] = set()
         self._lock = threading.Lock()
         # stop() bumps the epoch; every assembly remembers the epoch it started in (per thread),
@@ -171,7 +163,7 @@ class AudioAssembler:
         )
         with self._lock:
             self._active_processes.add(process)
-            _ACTIVE_PROCESSES.add(process) # Keep global for atexit fallback
+            self._registry.add(process)  # atexit fallback
 
         try:
             stderr_output = self._monitor_process(process, total_duration, speed, callback)
@@ -183,7 +175,7 @@ class AudioAssembler:
         finally:
             with self._lock:
                 self._active_processes.discard(process)
-                _ACTIVE_PROCESSES.discard(process)
+                self._registry.discard(process)
             if process.poll() is None:
                 process.terminate()
 
@@ -233,12 +225,12 @@ class AudioAssembler:
                         stderr_lines.append(line)
                 break
 
-            # Guard against completely hung ffmpeg process (no output for 3 minutes)
-            if time.time() - last_activity > 180.0:
-                logging.error("ffmpeg process appears hung (no stderr output for 180s) — terminating.")
+            # Guard against a completely hung ffmpeg process
+            if time.time() - last_activity > FFMPEG_HANG_TIMEOUT_SECONDS:
+                logging.error(f"ffmpeg process appears hung (no stderr output for {FFMPEG_HANG_TIMEOUT_SECONDS:g}s) — terminating.")
                 process.terminate()
                 try:
-                    process.wait(timeout=3.0)
+                    process.wait(timeout=FFMPEG_TERMINATE_GRACE_SECONDS)
                 except Exception:
                     process.kill()
                 raise TimeoutError("ffmpeg process hung and was terminated.")

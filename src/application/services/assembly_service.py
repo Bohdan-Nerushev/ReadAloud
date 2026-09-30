@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, Future, wait
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from src.domain.audio_assembler import AudioAssembler
+from src.constants import ASSEMBLY_BATCH_SIZE
 from src.domain.models import GenerationTask, ProjectConfig
 from src.infrastructure.logging_config import set_correlation_id
 
@@ -29,14 +30,14 @@ class AssemblyService(QObject):
         - Call ``reset(total_chunks)`` at the start of each new task.
         - Call ``stop()`` to cancel in-flight assembly work.
         - The executor is re-created on every ``reset()`` so recovery after a
-          previous ``stop()`` always works reliably (ISSUE-9 FIX).
+          previous ``stop()`` always works reliably.
     """
 
     assemblyProgressUpdated = pyqtSignal(float, float)  # percentage, remaining
     batchAssemblyFinished = pyqtSignal(int, str)        # batch_index, file_path
     assemblyError = pyqtSignal(str)
 
-    BATCH_SIZE = 40
+    BATCH_SIZE = ASSEMBLY_BATCH_SIZE
 
     def __init__(self, audio_assembler: AudioAssembler) -> None:
         """Initialize AssemblyService."""
@@ -65,12 +66,8 @@ class AssemblyService(QObject):
         """
         Resets state for a new task and creates a fresh thread pool.
 
-        ISSUE-9 FIX:
-            Always creates a fresh ``ThreadPoolExecutor`` on reset regardless of
-            the previous executor state.  This avoids the subtle bug where
-            ``stop()`` shut down the executor but the ``reset()`` check only
-            re-created it if it was ``None``.  Now the reference is always valid
-            after ``reset()``.
+        Always creates a fresh ``ThreadPoolExecutor`` regardless of the previous
+        executor state, so the reference is valid after ``reset()`` even following ``stop()``.
         """
         # Shut down any existing executor before replacing it
         if self._executor is not None:
@@ -101,10 +98,8 @@ class AssemblyService(QObject):
         """
         Cancels all running assembly tasks.
 
-        ISSUE-9 FIX:
-            Sets executor to None so that any stale calls to ``submit_batch_by_index``
-            after a stop will recreate it safely (or will be guarded by caller-side
-            checks).  The next ``reset()`` creates a clean executor.
+        Sets the executor to None so stale ``submit_batch_by_index`` calls recreate it
+        safely; the next ``reset()`` creates a clean one.
         """
         executor = self._executor
         self._executor = None
@@ -256,19 +251,15 @@ class AssemblyService(QObject):
         future.add_done_callback(_done_callback)
 
     # ------------------------------------------------------------------
-    # Recovery public API (BUG-5 FIX)
+    # Recovery public API
     # ------------------------------------------------------------------
 
     def restore_batch_result(self, batch_index: int, part_path: str) -> None:
         """
         Restores a previously assembled batch part during task recovery.
 
-        BUG-5 FIX:
-            Previously ``app_controller._restore_progress_from_disk`` directly
-            mutated private attributes ``_batch_results`` and ``_batch_submitted``
-            to restore state after a crash.  That violated the Law of Demeter and
-            created hidden coupling.  This public method encapsulates the state
-            mutation within the service that owns it.
+        Callers restore batch state through this method instead of touching the
+        service's private attributes.
 
         Args:
             batch_index: The 0-based index of the restored batch.

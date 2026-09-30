@@ -205,22 +205,3 @@ class MainWindow(QMainWindow):
         self.speed_selector.setVisible(True)
         self.thread_selector.setVisible(is_edge)
     
-    def set_inputs_enabled(
-            self,
-            enabled: bool
-    ) -> None:
-        """
-        Enables or disables all input widgets.
-        
-        Args:
-            enabled: True to enable, False to disable
-        """
-        self.project_input.setEnabled(enabled)
-        self.file_selector.setEnabled(enabled)
-        self.output_selector.setEnabled(enabled)
-        self.language_selector.setEnabled(enabled)
-        self.gender_selector.setEnabled(enabled)
-        self.speed_selector.setEnabled(enabled)
-        self.thread_selector.setEnabled(enabled)
-        if self.tts_backend_selector is not None:
-            self.tts_backend_selector.setEnabled(enabled)

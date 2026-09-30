@@ -72,8 +72,3 @@ class ControlButtonsWidget(QWidget):
         """Sets buttons to paused state."""
         self._start_button.setEnabled(True)
     
-    def disable_all(
-            self
-    ) -> None:
-        """Disables all buttons."""
-        self._start_button.setEnabled(False)

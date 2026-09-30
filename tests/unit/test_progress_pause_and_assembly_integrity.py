@@ -22,6 +22,7 @@ sys.modules.setdefault("edge_tts", MagicMock())
 from PyQt6.QtCore import QCoreApplication
 
 from src.application.app_controller import PreparationWorker
+from src.domain.base_generator import BaseAudioGenerator
 from src.application.services.assembly_service import AssemblyService
 from src.application.services.generation_service import GenerationService
 from src.application.services.persistence_service import PersistenceService
@@ -376,12 +377,13 @@ class TestServicePropagatesPause:
         service, gen, _ = self._service()
         gen.resume.assert_called()
 
-    def test_generator_without_pause_support_is_tolerated(self):
-        class Minimal:
-            last_error = None
-
+    def test_generator_whose_pause_fails_is_tolerated(self):
+        class Minimal(BaseAudioGenerator):
             def generate_audio_batch(self, *a, **k):
                 return []
+
+            def pause(self):
+                raise RuntimeError("cannot pause")
 
         service = GenerationService(Minimal())
         with patch("src.application.services.generation_service.ThreadManager") as tm:
@@ -609,7 +611,8 @@ class TestManifestThrottling:
         assert p.save_manifest(str(tmp_path), data)
         raw = (tmp_path / "manifest.json").read_text(encoding="utf-8")
         assert "\n" not in raw and "Привіт" in raw
-        assert p.load_manifest(str(tmp_path)) == data
+        import json
+        assert json.loads(raw) == data
 
 
 # ---------------------------------------------------------------------------

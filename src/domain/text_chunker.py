@@ -10,6 +10,7 @@ import re
 from typing import List
 
 from src.domain.models import AudioChunk
+from src.constants import CHUNK_TARGET_CHARS
 
 # A sentence ends at ., !, ? or … (plus closing quotes/brackets) followed by
 # whitespace, or at a line break. The trailing whitespace stays with the sentence.
@@ -34,7 +35,7 @@ class TextChunker:
     def __init__(self) -> None:
         """Initialize the TextChunker."""
 
-    def chunk_text(self, text: str, chunk_size: int = 1000) -> List[AudioChunk]:
+    def chunk_text(self, text: str, chunk_size: int = CHUNK_TARGET_CHARS) -> List[AudioChunk]:
         """
         Args:
             text: The text to split into chunks

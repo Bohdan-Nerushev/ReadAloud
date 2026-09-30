@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
 from src.domain.exceptions import TransientGenerationException, FatalGenerationException, is_fatal_setup_error
-from src.domain.cancellable_batch import CancellableBatchMixin
+from src.domain.async_loop_host import AsyncLoopHostMixin
+from src.domain.base_generator import BaseAudioGenerator
 from src.domain.models import AudioChunk
+from src.constants import EDGE_SYNTHESIS_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +115,7 @@ def _is_transient_error(exc: BaseException) -> bool:
     return any(sub in msg for sub in _TRANSIENT_ERROR_SUBSTRINGS)
 
 
-class AudioGenerator(CancellableBatchMixin):
+class AudioGenerator(AsyncLoopHostMixin, BaseAudioGenerator):
     """
     Service responsible for generating audio files from text using Edge TTS.
 
@@ -171,6 +173,8 @@ class AudioGenerator(CancellableBatchMixin):
     # Sentinel used to signal async workers to stop
     _STOP_SENTINEL = object()
 
+    _LOOP_THREAD_NAME = "AudioGenerator-AsyncLoop"
+
     def __init__(self, network_manager: Optional[Any] = None, max_concurrency: int = 3) -> None:
         """Initialize the AudioGenerator."""
         self._edge_tts = None
@@ -178,52 +182,18 @@ class AudioGenerator(CancellableBatchMixin):
         self._max_concurrency = max_concurrency
         self._rate_limit_reset_time = 0.0
         self._consecutive_rate_limits = 0
-        self._init_lock = threading.Lock()
+        self._init_loop_host()
         self._init_cancellation()
         self._auto_toggle_wlan = False
 
-        self._loop_ready = threading.Event()
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._network_lock: Optional[asyncio.Lock] = None
 
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._loop_thread: Optional[threading.Thread] = None
         self.ensure_loop_running()
 
-    def ensure_loop_running(self) -> None:
-        """Ensures the background asyncio event loop thread is active and running."""
-        with self._init_lock:
-            if (
-                self._loop is None
-                or not self._loop.is_running()
-                or self._loop_thread is None
-                or not self._loop_thread.is_alive()
-            ):
-                self._loop_ready.clear()
-                self._loop = asyncio.new_event_loop()
-                self._loop_thread = threading.Thread(
-                    target=self._start_background_loop,
-                    args=(self._loop,),
-                    daemon=True,
-                    name="AudioGenerator-AsyncLoop"
-                )
-                self._loop_thread.start()
-                if not self._loop_ready.wait(timeout=10.0):
-                    raise RuntimeError(
-                        "AudioGenerator: background asyncio loop did not start within 10 seconds"
-                    )
-
-    # ------------------------------------------------------------------
-    # Internal initialisation
-    # ------------------------------------------------------------------
-
-    def _start_background_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Runs the asyncio event loop in a dedicated thread."""
-        asyncio.set_event_loop(loop)
+    def _on_loop_started(self) -> None:
         self._semaphore = asyncio.Semaphore(self._max_concurrency)
         self._network_lock = asyncio.Lock()
-        self._loop_ready.set()
-        loop.run_forever()
 
     # ------------------------------------------------------------------
     # Public interface
@@ -236,21 +206,6 @@ class AudioGenerator(CancellableBatchMixin):
             import edge_tts
             self._edge_tts = edge_tts
         return self._edge_tts
-
-    def generate_audio(
-            self,
-            chunk: AudioChunk,
-            language: str,
-            gender: str,
-            output_dir: str
-    ) -> Tuple[str, float]:
-        """
-        Generates an audio file from a single text chunk.
-
-        Delegates to ``generate_audio_batch`` with a one-element list.
-        """
-        results = self.generate_audio_batch([chunk], language, gender, output_dir)
-        return results[0]
 
     def generate_audio_batch(
             self,
@@ -337,14 +292,11 @@ class AudioGenerator(CancellableBatchMixin):
         """
         Core async worker pool for batch audio generation.
 
-        BUG-3 FIX:
-            Uses a proper producer/consumer pattern with a sentinel-based
-            stop signal instead of the racy ``queue.empty()`` + ``get_nowait()``
-            pattern. Each worker processes items until it receives the sentinel.
+        Producer/consumer pattern: every worker takes chunks from a queue until it
+        receives a stop sentinel (the sentinel is the only exit condition).
 
-        BUG-2 FIX:
-            Individual chunk failures are isolated.  A failed chunk stores
-            ``None`` in the result list; it does NOT abort the batch or raise.
+        Chunk failures are isolated: a failed chunk stores ``None`` in the result list
+        and never aborts the batch or raises.
         """
         # Populate queue: (index, chunk) tuples
         queue: asyncio.Queue = asyncio.Queue()
@@ -361,7 +313,7 @@ class AudioGenerator(CancellableBatchMixin):
             while True:
                 item = await queue.get()
                 try:
-                    # BUG-3 FIX: sentinel check is the ONLY exit condition
+                    # The sentinel is the only exit condition
                     if item is self._STOP_SENTINEL:
                         return
 
@@ -384,7 +336,7 @@ class AudioGenerator(CancellableBatchMixin):
                                     exc_info=True
                                 )
                     except Exception as exc:
-                        # BUG-2 FIX: log the failure but keep other chunks going
+                        # Log the failure but keep other chunks going
                         logging.error(
                             f"Chunk {chunk.chunk_number} failed permanently after "
                             f"{max_retries} attempt(s): {exc}",
@@ -421,19 +373,11 @@ class AudioGenerator(CancellableBatchMixin):
         """
         Generates audio for a single chunk with exponential backoff + jitter.
 
-        ISSUE-10 FIX:
-            Added random jitter to back-off delay to prevent thundering-herd
-            when many concurrent workers all fail at the same time.
-
-        ISSUE-11 FIX:
-            Fatal errors (ValueError, FatalGenerationException, etc.) abort
-            immediately without consuming remaining retry attempts.
-
-        SESSION-CLOSED FIX:
-            Removed shared SafeTCPConnector. Each Communicate call creates its
-            own aiohttp.ClientSession internally. This eliminates the race where
-            a recycled (closed) connector was still held by in-flight workers,
-            causing RuntimeError("Session is closed") on their first attempt.
+        Back-off delays carry random jitter so that workers failing together do not
+        retry together. Fatal errors (ValueError, FatalGenerationException, ...) abort
+        at once without consuming the remaining attempts; retries also stop when the
+        shared retry budget is spent. Every Communicate call owns its aiohttp session
+        (see the class docstring), so no connector is shared between workers.
         """
         if not chunk.text_content or not chunk.text_content.strip():
             raise FatalGenerationException(f"Chunk {chunk.chunk_number} text content is empty")
@@ -471,7 +415,7 @@ class AudioGenerator(CancellableBatchMixin):
                     await asyncio.sleep(random.uniform(0.1, 0.3))
                     try:
                         await asyncio.wait_for(
-                            communicate.save(str(tmp_audio_path)), timeout=60
+                            communicate.save(str(tmp_audio_path)), timeout=EDGE_SYNTHESIS_TIMEOUT_SECONDS
                         )
                     except asyncio.TimeoutError as te:
                         if tmp_audio_path.exists():
@@ -506,7 +450,7 @@ class AudioGenerator(CancellableBatchMixin):
             except Exception as exc:
                 last_exception = exc
 
-                # ISSUE-11 FIX: bail out immediately on fatal errors
+                # Fatal errors are not retried
                 if not _is_transient_error(exc):
                     logging.error(
                         f"Fatal error on chunk {chunk.chunk_number} "
@@ -520,6 +464,11 @@ class AudioGenerator(CancellableBatchMixin):
                 # Transient error — log and back-off before next attempt
                 remaining = max_retries - attempt - 1
                 if remaining > 0:
+                    if not self._may_retry():
+                        logging.warning(
+                            f"Retry budget exhausted; chunk {chunk.chunk_number} fails without further retries: {exc}"
+                        )
+                        break
                     # Check and recover network connection / WLAN on disconnect
                     if self._network_manager and not await self._network_is_up():
                         logging.warning(
@@ -583,24 +532,3 @@ class AudioGenerator(CancellableBatchMixin):
     # ------------------------------------------------------------------
     # Utility helpers
     # ------------------------------------------------------------------
-
-    def _get_file_duration_fast(self, file_path: str) -> float:
-        """Fast duration extraction using mutagen."""
-        try:
-            from mutagen.mp3 import MP3
-            audio = MP3(file_path)
-            return float(audio.info.length)
-        except Exception:
-            return 0.0
-
-    def close(self) -> None:
-        """Stops and closes the background asyncio event loop."""
-        if hasattr(self, '_loop') and self._loop:
-            if self._loop.is_running():
-                self._loop.call_soon_threadsafe(self._loop.stop)
-            if hasattr(self, '_loop_thread') and self._loop_thread.is_alive():
-                self._loop_thread.join(timeout=2.0)
-            try:
-                self._loop.close()
-            except Exception:
-                pass

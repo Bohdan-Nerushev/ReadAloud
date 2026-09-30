@@ -38,9 +38,6 @@ class TestGUILogic(unittest.TestCase):
         widget.set_paused_state()
         self.assertTrue(widget._start_button.isEnabled())
         
-        # Disable all
-        widget.disable_all()
-        self.assertFalse(widget._start_button.isEnabled())
         
     def test_queue_item_emits_delete(self):
         """Test that delete button emits deleteRequested signal."""

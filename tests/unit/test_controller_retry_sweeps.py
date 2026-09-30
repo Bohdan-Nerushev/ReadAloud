@@ -18,15 +18,17 @@ from PyQt6.QtCore import QCoreApplication
 
 from tests.unit._lifecycle_helpers import make_config, make_controller
 from src.application.services.generation_service import GenerationService
+from src.domain.base_generator import BaseAudioGenerator
 from src.domain.models import AudioChunk, TaskStatus
 
 INF = 10 ** 6
 
 
-class FakeGenerator:
+class FakeGenerator(BaseAudioGenerator):
     """Synthesizes instantly unless told to fail or to wait on a gate."""
 
     def __init__(self, fail_attempts=None):
+        self._init_cancellation()
         self.fail_attempts = dict(fail_attempts or {})
         self.gate = None
         self.gate_from_attempt = 2

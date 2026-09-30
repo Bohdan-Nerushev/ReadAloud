@@ -22,6 +22,7 @@ Design decisions:
     and PiperAudioGenerator so GenerationService can use any backend transparently.
 """
 
+import contextlib
 import gc
 import io
 import logging
@@ -31,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from src.domain.cancellable_batch import PausableMixin
+from src.domain.base_generator import BaseAudioGenerator
 from src.domain.exceptions import (
     FatalGenerationException,
     TransientGenerationException,
@@ -41,6 +42,7 @@ from src.domain.exceptions import (
     XttsReferenceAudioMissingException,
 )
 from src.domain.models import AudioChunk
+from src.constants import NON_SPEECH_SILENCE_SECONDS
 from src.domain.xtts_sentence_chunker import XttsSentenceChunker
 from src.infrastructure.xtts_model_manager import (
     XTTS_LANGUAGE_MAP,
@@ -68,7 +70,7 @@ _DEFAULT_MAX_RETRIES: int = 3
 _DEFAULT_BACKOFF: float = 2.0
 
 
-class XttsAudioGenerator(PausableMixin):
+class XttsAudioGenerator(BaseAudioGenerator):
     """
     TTS generator that synthesises audio locally via Coqui XTTS-v2.
 
@@ -82,6 +84,8 @@ class XttsAudioGenerator(PausableMixin):
         queue up on the lock, so at most one model.tts() call runs at a time
         and unload_model() waits for the running chunk.
     """
+
+    MP3_BITRATE = MP3_BITRATE
 
     def __init__(
             self,
@@ -111,6 +115,9 @@ class XttsAudioGenerator(PausableMixin):
         self._synth_lock = threading.RLock()
         self._model = None  # type: Optional[object]  # TTS instance, loaded lazily
         self._model_loaded: bool = False
+        # Speaker conditioning of the last voice; holds GPU tensors, so it is dropped on unload.
+        self._latents_cache: dict = {}
+        self._latents_unsupported = False
         self._cancel_epoch = 0
         self._init_pause()
         self.last_error: Optional[str] = None
@@ -118,17 +125,6 @@ class XttsAudioGenerator(PausableMixin):
     # ------------------------------------------------------------------
     # TtsGeneratorProtocol implementation
     # ------------------------------------------------------------------
-
-    def generate_audio(
-            self,
-            chunk: AudioChunk,
-            language: str,
-            gender: str,
-            output_dir: str,
-    ) -> Tuple[str, float]:
-        """Generates audio for a single chunk. Delegates to generate_audio_batch."""
-        results = self.generate_audio_batch([chunk], language, gender, output_dir)
-        return results[0]
 
     def cancel(self) -> None:
         """
@@ -321,6 +317,8 @@ class XttsAudioGenerator(PausableMixin):
             with self._model_lock:
                 self._model = None
                 self._model_loaded = False
+                self._latents_cache = {}
+                self._latents_unsupported = False
             gc.collect()
             self._model_manager.flush_gpu_cache()
         logger.info("XTTS-v2 model unloaded and GPU cache flushed.")
@@ -351,8 +349,10 @@ class XttsAudioGenerator(PausableMixin):
             )
 
         last_exception: Optional[BaseException] = None
+        attempts = 0
 
         for attempt in range(max_retries):
+            attempts = attempt + 1
             self._wait_while_paused(lambda: epoch is not None and self._cancel_epoch != epoch)
             if epoch is not None and self._cancel_epoch != epoch:
                 raise FatalGenerationException(f"Chunk {chunk.chunk_number} cancelled")
@@ -383,6 +383,12 @@ class XttsAudioGenerator(PausableMixin):
                 last_exception = exc
                 remaining = max_retries - attempt - 1
                 if remaining > 0:
+                    if not self._may_retry():
+                        logger.warning(
+                            "Retry budget exhausted; XTTS chunk %d fails without further retries: %s",
+                            chunk.chunk_number, exc,
+                        )
+                        break
                     delay = min(60.0, backoff * (2 ** attempt))
                     logger.warning(
                         "Transient XTTS error on chunk %d (attempt %d/%d): %s. "
@@ -397,7 +403,7 @@ class XttsAudioGenerator(PausableMixin):
                     )
 
         raise TransientGenerationException(
-            f"XTTS chunk {chunk.chunk_number} failed after {max_retries} attempt(s): "
+            f"XTTS chunk {chunk.chunk_number} failed after {attempts} attempt(s): "
             f"{last_exception}",
         )
 
@@ -503,7 +509,7 @@ class XttsAudioGenerator(PausableMixin):
         # Guard 1: if segment contains no speakable characters, return short silence
         if not any(c.isalnum() for c in text):
             logger.warning("[XTTS] Segment text has no speakable characters: %r. Returning silence.", text)
-            return np.zeros(int(0.2 * XTTS_SAMPLE_RATE), dtype=np.float32).tolist()
+            return np.zeros(int(NON_SPEECH_SILENCE_SECONDS * XTTS_SAMPLE_RATE), dtype=np.float32).tolist()
 
         # Guard 2: auto-fallback language if Cyrillic text passed in non-Cyrillic mode (e.g., lang='en')
         effective_language = language
@@ -526,20 +532,7 @@ class XttsAudioGenerator(PausableMixin):
             )
 
         try:
-            try:
-                import torch
-                with torch.inference_mode():
-                    audio = model.tts(  # type: ignore[attr-defined]
-                        text=text,
-                        speaker_wav=speaker_wav,
-                        language=effective_language,
-                    )
-            except ImportError:
-                audio = model.tts(  # type: ignore[attr-defined]
-                    text=text,
-                    speaker_wav=speaker_wav,
-                    language=effective_language,
-                )
+            audio = self._run_inference(model, text, effective_language, speaker_wav)
 
             if audio is None or len(audio) == 0:
                 raise TransientGenerationException(
@@ -578,6 +571,64 @@ class XttsAudioGenerator(PausableMixin):
             ) from exc
 
     # ------------------------------------------------------------------
+    # Inference with cached speaker conditioning
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _speaker_key(speaker_wav: str) -> Tuple[str, int, int]:
+        """Cache key that changes when the reference file is replaced or edited."""
+        try:
+            st = os.stat(speaker_wav)
+            return speaker_wav, st.st_mtime_ns, st.st_size
+        except OSError:
+            return speaker_wav, 0, 0
+
+    def _conditioning_latents(self, model: object, speaker_wav: str):
+        """
+        Returns cached ``(gpt_cond_latent, speaker_embedding)`` for the reference WAV.
+
+        ``model.tts(speaker_wav=...)`` re-analyses the reference audio for every
+        segment; computing the latents once per voice removes that cost. Returns None
+        when the model does not expose the low-level API, in which case callers fall
+        back to ``model.tts``.
+        """
+        if self._latents_unsupported:
+            return None
+        key = self._speaker_key(speaker_wav)
+        cached = self._latents_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            tts_model = model.synthesizer.tts_model  # type: ignore[attr-defined]
+            gpt_cond_latent, speaker_embedding = tts_model.get_conditioning_latents(
+                audio_path=[speaker_wav]
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.info("[XTTS] Conditioning-latent cache unavailable (%s); using model.tts().", exc)
+            self._latents_unsupported = True
+            return None
+        self._latents_cache = {key: (gpt_cond_latent, speaker_embedding)}  # keep one voice only
+        return self._latents_cache[key]
+
+    def _run_inference(self, model: object, text: str, language: str, speaker_wav: str):
+        """Synthesises one segment inside ``torch.inference_mode`` using cached latents if possible."""
+        try:
+            import torch
+            mode = torch.inference_mode()
+        except ImportError:
+            mode = contextlib.nullcontext()
+        with mode:
+            latents = self._conditioning_latents(model, speaker_wav)
+            if latents is None:
+                return model.tts(text=text, speaker_wav=speaker_wav, language=language)  # type: ignore[attr-defined]
+            wav = model.synthesizer.tts_model.inference(  # type: ignore[attr-defined]
+                text, language, latents[0], latents[1]
+            )["wav"]
+            if hasattr(wav, "detach"):
+                wav = wav.detach().cpu().numpy()
+            return wav
+
+    # ------------------------------------------------------------------
     # WAV -> MP3 conversion and duration extraction
     # ------------------------------------------------------------------
 
@@ -586,41 +637,3 @@ class XttsAudioGenerator(PausableMixin):
         from pydub import AudioSegment
         audio = AudioSegment.from_file(wav_bytes, format="wav")
         audio.export(str(mp3_tmp_path), format="mp3", bitrate=MP3_BITRATE)
-
-    def _convert_wav_to_mp3(self, wav_path: Path, mp3_tmp_path: Path) -> None:
-        """
-        Converts a WAV file to MP3 using pydub (wraps ffmpeg).
-        Removes the temporary WAV regardless of conversion outcome.
-        """
-        try:
-            from pydub import AudioSegment
-            audio = AudioSegment.from_wav(str(wav_path))
-            audio.export(str(mp3_tmp_path), format="mp3", bitrate=MP3_BITRATE)
-        finally:
-            try:
-                wav_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    def _get_mp3_duration(self, file_path: str) -> float:
-        """Returns MP3 duration in seconds using mutagen."""
-        try:
-            from mutagen.mp3 import MP3
-            return float(MP3(file_path).info.length)
-        except Exception:
-            return 0.0
-
-    def _get_file_duration_fast(self, file_path: str) -> float:
-        """Alias for _get_mp3_duration — provides a uniform interface across all TTS generators."""
-        return self._get_mp3_duration(file_path)
-
-    @staticmethod
-    def _cleanup_tmp_files(*paths: Optional[Path]) -> None:
-        """Silently removes temporary files to avoid leaving stale artefacts."""
-        for path in paths:
-            if path is not None:
-                try:
-                    if path.exists():
-                        path.unlink()
-                except Exception:
-                    pass
