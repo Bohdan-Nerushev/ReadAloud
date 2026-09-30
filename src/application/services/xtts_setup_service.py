@@ -158,6 +158,10 @@ class XttsSetupService(QObject):
     # Model unload
     # ------------------------------------------------------------------
 
+    def is_model_loaded(self) -> bool:
+        """True if the generator currently holds the XTTS model in memory."""
+        return self._generator is not None and bool(self._generator.is_model_loaded)
+
     def unload_model(self) -> None:
         """
         Unloads the XTTS model from GPU memory and flushes the CUDA cache.

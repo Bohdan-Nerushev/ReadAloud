@@ -339,7 +339,7 @@ class TestBatchErrorAccounting(unittest.TestCase):
         service = GenerationService(Exploding())
         with tempfile.TemporaryDirectory() as tmp:
             task = MagicMock()
-            task.config.thread_count = 1
+            task.config.effective_thread_count = 1
             task.config.language, task.config.gender = "en", "male"
             chunks = [AudioChunk(chunk_number=i, text_content="t") for i in (1, 2, 3)]
             service.start_generation(task, chunks, tmp)

@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8.0
+numpy>=1.26
+soundfile>=0.12

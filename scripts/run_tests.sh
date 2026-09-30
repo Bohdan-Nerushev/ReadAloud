@@ -1,49 +1,23 @@
 #!/bin/bash
 
 # ReadAloud Test Runner
-# This script executes all unit, integration, and UI tests.
+# Runs every test module in its own pytest process (see tests/run_all_tests.py).
+# Tests marked docker / gpu / integration are skipped by default:
+#   scripts/run_tests.sh --all        # include them (needs Docker / GPU)
+#   scripts/run_tests.sh -- -k name   # extra arguments are passed to pytest
 
-# Exit on any failure
 set -e
+
+cd "$(dirname "$0")/.."
+
+PYTHON="${PYTHON:-./venv/bin/python3}"
+[ -x "$PYTHON" ] || PYTHON=python3
 
 echo "------------------------------------------------"
 echo "🚀 Starting ReadAloud Test Suite"
 echo "------------------------------------------------"
 
-# Ensure we are in the project root
-cd "$(dirname "$0")/.."
-
-# Tests are listed explicitly to ensure deterministic execution order
-# and prevent accidental discovery of non-test utility scripts.
-
-echo "📦 Running core test suite..."
-PYTHONPATH=. ./venv/bin/python3 -m unittest \
-    tests/unit/test_queue_service.py \
-    tests/unit/test_generation_service.py \
-    tests/unit/test_assembly_service.py \
-    tests/unit/test_text_processor.py \
-    tests/unit/test_text_chunker.py \
-    tests/unit/test_file_manager.py \
-    tests/unit/test_progress_tracker.py \
-    tests/unit/test_thread_manager.py \
-    tests/unit/test_audio_generator.py \
-    tests/unit/test_app_controller.py \
-    tests/unit/test_audio_assembler.py \
-    tests/unit/test_persistence_service.py \
-    tests/unit/test_progress_tracker_retry.py \
-    tests/unit/test_queue_service_failed_tasks.py \
-    tests/unit/test_controller_task_lifecycle.py \
-    tests/unit/test_controller_retry_sweeps.py \
-    tests/test_queue.py \
-    tests/test_persistence_integration.py \
-    tests/test_optimization.py \
-    tests/stress_test_large_file.py \
-    tests/test_integration.py \
-    tests/test_concurrency.py \
-    tests/test_gui.py
-
-echo "📦 Running GUI logic suite (offscreen)..."
-PYTHONPATH=. QT_QPA_PLATFORM=offscreen ./venv/bin/python3 tests/unit/test_gui_logic.py
+PYTHONPATH=. QT_QPA_PLATFORM=offscreen "$PYTHON" tests/run_all_tests.py "$@"
 
 echo ""
 echo "------------------------------------------------"

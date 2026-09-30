@@ -91,7 +91,7 @@ class GenerationService(QObject):
         if self._thread_manager:
             self._thread_manager.stop()
 
-        self._thread_manager = ThreadManager(thread_count=task.config.thread_count)
+        self._thread_manager = ThreadManager(thread_count=task.config.effective_thread_count)
         self._thread_manager.start()
 
         completed_count = sum(1 for c in chunks if c.audio_file_path is not None)
@@ -115,10 +115,10 @@ class GenerationService(QObject):
             self._progress_tracker.begin_retry(c.chunk_number for c in chunks_to_retry)
 
         correlation_id = str(task.id)
-        max_workers = min(task.config.thread_count, len(chunks_to_retry))
+        max_workers = min(task.config.effective_thread_count, len(chunks_to_retry))
 
         if not self._thread_manager:
-            self._thread_manager = ThreadManager(thread_count=task.config.thread_count)
+            self._thread_manager = ThreadManager(thread_count=task.config.effective_thread_count)
             self._thread_manager.start()
 
         for i in range(0, len(chunks_to_retry), self.BATCH_GEN_SIZE):
@@ -193,7 +193,7 @@ class GenerationService(QObject):
 
         correlation_id = str(self._current_task.id)
         pending_chunks = [c for c in self._chunks if c.audio_file_path is None]
-        max_workers = min(self._current_task.config.thread_count, 10)
+        max_workers = min(self._current_task.config.effective_thread_count, 10)
 
         logging.info(
             f"Submitting {len(pending_chunks)} pending chunk(s) "

@@ -22,6 +22,7 @@ Design decisions:
     and PiperAudioGenerator so GenerationService can use any backend transparently.
 """
 
+import gc
 import io
 import logging
 import os
@@ -32,6 +33,7 @@ from typing import Callable, List, Optional, Tuple
 from src.domain.exceptions import (
     FatalGenerationException,
     TransientGenerationException,
+    XttsModelNotLoadedException,
     XttsNotAvailableException,
     XttsOutOfMemoryException,
     XttsReferenceAudioMissingException,
@@ -74,8 +76,9 @@ class XttsAudioGenerator:
     Thread-safety:
         _model_lock ensures the model is loaded exactly once even if
         generate_audio_batch is called concurrently from multiple threads.
-        Synthesis itself is not parallelised — XTTS-v2 is GPU-bound and
-        concurrent calls would cause CUDA OOM.
+        _synth_lock serialises synthesis and unloading: concurrent batches
+        queue up on the lock, so at most one model.tts() call runs at a time
+        and unload_model() waits for the running chunk.
     """
 
     def __init__(
@@ -101,6 +104,9 @@ class XttsAudioGenerator:
         )
 
         self._model_lock = threading.Lock()
+        # Serialises synthesis (and unloading) on the single shared model: the
+        # model is neither documented nor tested as safe for concurrent tts() calls.
+        self._synth_lock = threading.RLock()
         self._model = None  # type: Optional[object]  # TTS instance, loaded lazily
         self._model_loaded: bool = False
 
@@ -287,10 +293,13 @@ class XttsAudioGenerator:
 
         Safe to call even if the model was never loaded.
         """
-        with self._model_lock:
-            self._model = None
-            self._model_loaded = False
-        self._model_manager.flush_gpu_cache()
+        # Wait for a running synthesis instead of pulling the model out from under it.
+        with self._synth_lock:
+            with self._model_lock:
+                self._model = None
+                self._model_loaded = False
+            gc.collect()
+            self._model_manager.flush_gpu_cache()
         logger.info("XTTS-v2 model unloaded and GPU cache flushed.")
 
     @property
@@ -321,12 +330,19 @@ class XttsAudioGenerator:
 
         for attempt in range(max_retries):
             try:
-                return self._synthesise_chunk(
-                    chunk=chunk,
-                    xtts_language=xtts_language,
-                    speaker_wav=speaker_wav,
-                    output_path=output_path,
-                )
+                with self._synth_lock:
+                    # Re-checked on every attempt: an earlier OOM (or a user "Unload")
+                    # may have released the model since the batch started.
+                    self._ensure_model_loaded()
+                    return self._synthesise_chunk(
+                        chunk=chunk,
+                        xtts_language=xtts_language,
+                        speaker_wav=speaker_wav,
+                        output_path=output_path,
+                    )
+            except XttsNotAvailableException:
+                # Missing package / failed load: retrying only hides the real reason.
+                raise
             except XttsReferenceAudioMissingException:
                 # Fatal — retrying will not fix a missing file.
                 raise
@@ -437,8 +453,14 @@ class XttsAudioGenerator:
 
         Returns a list of float samples at XTTS_SAMPLE_RATE.
 
+        Silence is returned only for text without speakable characters. Every
+        synthesis failure is raised so that the chunk is retried and, if it keeps
+        failing, reported as failed instead of becoming a silent gap in the audio.
+
         Raises:
             XttsOutOfMemoryException: On CUDA OOM.
+            XttsModelNotLoadedException: If the model was released meanwhile.
+            TransientGenerationException: On any other synthesis failure or empty output.
         """
         import numpy as np
         import re
@@ -462,28 +484,32 @@ class XttsAudioGenerator:
             language, effective_language, len(text), speaker_wav,
         )
 
+        model = self._model
+        if model is None:
+            raise XttsModelNotLoadedException(
+                "XTTS model is not loaded (released during synthesis)."
+            )
+
         try:
             try:
                 import torch
                 with torch.inference_mode():
-                    audio = self._model.tts(  # type: ignore[union-attr]
+                    audio = model.tts(  # type: ignore[attr-defined]
                         text=text,
                         speaker_wav=speaker_wav,
                         language=effective_language,
                     )
             except ImportError:
-                audio = self._model.tts(  # type: ignore[union-attr]
+                audio = model.tts(  # type: ignore[attr-defined]
                     text=text,
                     speaker_wav=speaker_wav,
                     language=effective_language,
                 )
 
             if audio is None or len(audio) == 0:
-                logger.warning(
-                    "[XTTS] Model returned empty audio for text=%r (lang='%s'). Substituting silence.",
-                    text[:40], effective_language,
+                raise TransientGenerationException(
+                    f"XTTS returned empty audio for text={text[:40]!r} (lang='{effective_language}')"
                 )
-                return np.zeros(int(0.2 * XTTS_SAMPLE_RATE), dtype=np.float32).tolist()
 
             logger.debug("[XTTS] _synthesise_segment: got %d samples.", len(audio))
             return audio
@@ -506,12 +532,15 @@ class XttsAudioGenerator:
                     f"Original error: {exc}"
                 ) from exc
 
-            # Non-OOM exception (e.g. text cleaning error, unsupported token, phonemizer failure)
+            if isinstance(exc, (TransientGenerationException, XttsModelNotLoadedException)):
+                raise
             logger.warning(
-                "[XTTS] Non-OOM exception synthesising segment (text=%r, lang='%s'): %s. Substituting silence.",
+                "[XTTS] Synthesis failed (text=%r, lang='%s'): %s",
                 text[:40], effective_language, exc,
             )
-            return np.zeros(int(0.2 * XTTS_SAMPLE_RATE), dtype=np.float32).tolist()
+            raise TransientGenerationException(
+                f"XTTS synthesis failed for text={text[:40]!r} (lang='{effective_language}'): {exc}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # WAV -> MP3 conversion and duration extraction

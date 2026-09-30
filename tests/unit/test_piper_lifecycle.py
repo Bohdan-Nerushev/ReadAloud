@@ -102,7 +102,8 @@ class TestPiperLifecycle:
         # Queue returns no active or pending tasks
         mock_services["queue_service"].get_all_tasks.return_value = []
 
-        controller._auto_stop_piper_if_idle()
+        controller._piper_used = True
+        controller._release_idle_backends()
 
         mock_services["piper_setup_service"].stop_container.assert_called_once()
 

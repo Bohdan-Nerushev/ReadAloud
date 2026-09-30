@@ -58,7 +58,7 @@ class TestIntegration(unittest.TestCase):
             with open(path, 'r', encoding='utf-8') as f:
                 self.assertEqual(f.read(), chunk.text_content)
  
-    @patch('src.application.services.generation_service.AudioGenerator')
+    @patch('src.domain.audio_generator.AudioGenerator')
     @patch('src.application.services.assembly_service.AudioAssembler')
     def test_app_orchestration_integration(self, mock_assembler, mock_generator):
         """

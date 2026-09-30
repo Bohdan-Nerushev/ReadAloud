@@ -155,6 +155,8 @@ class TtsBackendSelector(QWidget):
         super().__init__(parent)
         self._piper_setup_service = piper_setup_service
         self._xtts_setup_service = xtts_setup_service
+        self._generation_active = False
+        self._xtts_busy = False
         self._current_language = "ru"
         self._current_gender = "male"
 
@@ -322,10 +324,11 @@ class TtsBackendSelector(QWidget):
         self._xtts_status_vram = QLabel("VRAM: checking…")
         self._xtts_status_model = QLabel("Model cache: checking…")
         self._xtts_status_speakers = QLabel("")
+        self._xtts_status_loaded = QLabel("Model in VRAM: unknown")
 
         for lbl in (self._xtts_status_package, self._xtts_status_cuda,
                     self._xtts_status_vram, self._xtts_status_model,
-                    self._xtts_status_speakers):
+                    self._xtts_status_loaded, self._xtts_status_speakers):
             lbl.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(lbl)
 
@@ -581,21 +584,47 @@ class TtsBackendSelector(QWidget):
                 f"Speaker WAVs: {ok} all present"
             )
 
+    @staticmethod
+    def xtts_unload_enabled(model_loaded: bool, generating: bool, busy: bool) -> bool:
+        """Unload is offered only while the model is in memory and no task is using it."""
+        return model_loaded and not generating and not busy
+
+    def _xtts_model_loaded(self) -> bool:
+        try:
+            return bool(self._xtts_setup_service is not None
+                        and self._xtts_setup_service.is_model_loaded())
+        except Exception:
+            return False
+
+    def set_generation_active(self, active: bool) -> None:
+        """Called by the main window when the queue starts/stops processing."""
+        self._generation_active = active
+        self.refresh_xtts_model_state()
+
+    def refresh_xtts_model_state(self) -> None:
+        """Re-reads the loaded state and updates the indicator and Unload button."""
+        loaded = self._xtts_model_loaded()
+        ok = "<span style='color: green'>✅ loaded</span>"
+        off = "<span style='color: gray'>○ not loaded</span>"
+        self._xtts_status_loaded.setText(f"Model in VRAM: {ok if loaded else off}")
+        self._btn_xtts_unload.setEnabled(
+            self.xtts_unload_enabled(loaded, self._generation_active, self._xtts_busy)
+        )
+
     def _update_xtts_button_states(self, result: XttsDiagnosticsResult) -> None:
         self._btn_xtts_recheck.setEnabled(True)
         # Show download button only when TTS package is installed but model not yet cached.
         self._btn_xtts_download.setEnabled(
             result.tts_package_installed and not result.model_cached
         )
-        # Unload button only useful when model is loaded (we can't easily detect this
-        # from diagnostics alone, so enable whenever XTTS is the selected backend and
-        # prerequisites pass, as a convenience).
-        self._btn_xtts_unload.setEnabled(result.is_ready)
+        # Free VRAM is irrelevant here: a loaded model itself consumes the VRAM.
+        self.refresh_xtts_model_state()
 
     def _set_xtts_buttons_busy(self, busy: bool) -> None:
+        self._xtts_busy = busy
         self._btn_xtts_download.setEnabled(not busy)
-        self._btn_xtts_unload.setEnabled(not busy)
         self._btn_xtts_recheck.setEnabled(not busy)
+        self.refresh_xtts_model_state()
 
 
 # Import here to avoid circular import at module level

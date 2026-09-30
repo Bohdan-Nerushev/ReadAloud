@@ -187,7 +187,7 @@ class TestPersistenceKeepsBackend(unittest.TestCase):
     def test_state_written_before_backend_was_persisted_defaults_to_edge(self):
         self._roundtrip(TtsBackend.EDGE_TTS)
         data = json.loads(self.state.read_text(encoding="utf-8"))
-        del data[0]["config"]["tts_backend"]
+        del data["tasks"][0]["config"]["tts_backend"]
         self.state.write_text(json.dumps(data), encoding="utf-8")
 
         (restored,) = self.persistence.load_state()
@@ -196,7 +196,7 @@ class TestPersistenceKeepsBackend(unittest.TestCase):
     def test_unknown_backend_value_skips_task_instead_of_guessing(self):
         self._roundtrip(TtsBackend.XTTS)
         data = json.loads(self.state.read_text(encoding="utf-8"))
-        data[0]["config"]["tts_backend"] = "martian"
+        data["tasks"][0]["config"]["tts_backend"] = "martian"
         self.state.write_text(json.dumps(data), encoding="utf-8")
 
         self.assertEqual(self.persistence.load_state(), [])

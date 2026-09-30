@@ -8,7 +8,7 @@ IMPORTANT: These tests require:
   - Speaker reference WAV files in src/resource/xtts_speakers/
 
 Run with:
-    pytest tests/integration/test_xtts_synthesis.py -v -m requires_gpu
+    pytest tests/integration/test_xtts_synthesis.py -v -m gpu
 
 Skip automatically if prerequisites are not met.
 """
@@ -46,7 +46,7 @@ def _check_prerequisites() -> str:
 _SKIP_REASON = _check_prerequisites()
 
 
-@pytest.mark.requires_gpu
+@pytest.mark.gpu
 @unittest.skipIf(bool(_SKIP_REASON), f"Skipping GPU tests: {_SKIP_REASON}")
 class TestXttsSynthesisPipeline(unittest.TestCase):
     """End-to-end integration tests for XttsAudioGenerator."""
@@ -149,7 +149,7 @@ class TestXttsSynthesisPipeline(unittest.TestCase):
         self.assertIsInstance(self.generator, TtsGeneratorProtocol)
 
 
-@pytest.mark.requires_gpu
+@pytest.mark.gpu
 @unittest.skipIf(bool(_SKIP_REASON), f"Skipping GPU tests: {_SKIP_REASON}")
 class TestXttsDiagnostics(unittest.TestCase):
 

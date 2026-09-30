@@ -238,16 +238,17 @@ class TestXttsGeneratorResilience(unittest.TestCase):
             language="uk",
         )
 
-    def test_non_oom_exception_returns_silence(self):
-        """Non-OOM exception in model.tts (e.g. cleaning error) must return silence, not raise."""
+    def test_non_oom_exception_is_raised_not_silenced(self):
+        """A failing model.tts must surface as an error, never as a silent gap."""
+        from src.domain.exceptions import TransientGenerationException
         manager = _make_manager()
         gen = XttsAudioGenerator(model_manager=manager)
         gen._model = MagicMock()
         gen._model.tts.side_effect = ValueError("[!] Text is empty after cleaning.")
         gen._model_loaded = True
 
-        samples = gen._synthesise_segment("Valid text.", "en", "/tmp/speaker.wav")
-        self.assertGreater(len(samples), 0)
+        with self.assertRaises(TransientGenerationException):
+            gen._synthesise_segment("Valid text.", "en", "/tmp/speaker.wav")
 
 
 if __name__ == "__main__":

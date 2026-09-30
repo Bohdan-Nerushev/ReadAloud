@@ -15,7 +15,9 @@
 services:
   piper:
     image: rhasspy/wyoming-piper
-    restart: unless-stopped
+    container_name: readaloud-piper
+    # ReadAloud starts and stops the container itself; never resurrect it on boot.
+    restart: "no"
     ports:
       - "${PIPER_PORT:-10200}:10200"
     volumes:

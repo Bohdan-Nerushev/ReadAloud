@@ -21,7 +21,7 @@ from src.infrastructure.ioc import Container
 
 PIPER_TESTS_ENABLED = os.environ.get("PIPER_INTEGRATION_TESTS", "0") == "1"
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.docker]
 
 
 @pytest.mark.skipif(not PIPER_TESTS_ENABLED, reason="Set PIPER_INTEGRATION_TESTS=1 to enable")

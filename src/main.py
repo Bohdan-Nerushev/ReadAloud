@@ -135,7 +135,7 @@ class ReadAloudApplication:
                 language=language,
                 gender=gender,
                 speed=speed,
-                thread_count=thread_count,
+                thread_count=thread_count if tts_backend == TtsBackend.EDGE_TTS else 1,
                 output_dir_path=output_dir,
                 tts_backend=tts_backend,
             )
@@ -191,6 +191,9 @@ class ReadAloudApplication:
             active: bool
     ) -> None:
         """Handles queue activity status changes."""
+        selector = self._window.tts_backend_selector
+        if selector is not None:
+            selector.set_generation_active(active)
         if active:
             self._window.control_buttons.set_running_state()
             self._window.progress_display.show()

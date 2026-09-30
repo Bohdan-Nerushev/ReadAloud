@@ -17,6 +17,11 @@ from typing import List, Dict, Any, Optional
 from src.domain.models import ProjectConfig, GenerationTask, TaskStatus, TtsBackend
 
 
+# Version 1 (implicit): bare JSON list, no tts_backend.
+# Version 2: {"version": 2, "tasks": [...]} with tts_backend stored per task.
+STATE_SCHEMA_VERSION = 2
+
+
 class PersistenceService:
     """
     Responsible for serialising and deserialising the task queue to disk.
@@ -46,7 +51,10 @@ class PersistenceService:
             try:
                 self._file_path.parent.mkdir(parents=True, exist_ok=True)
                 serialized = [self._task_to_dict(task) for task in tasks]
-                payload = json.dumps(serialized, indent=4, ensure_ascii=False)
+                payload = json.dumps(
+                    {"version": STATE_SCHEMA_VERSION, "tasks": serialized},
+                    indent=4, ensure_ascii=False,
+                )
 
                 tmp_path = self._file_path.with_name(f"{self._file_path.name}.{uuid.uuid4().hex}.tmp")
                 tmp_path.write_text(payload, encoding="utf-8")
@@ -77,10 +85,19 @@ class PersistenceService:
 
         try:
             data = json.loads(self._file_path.read_text(encoding="utf-8"))
-            if not isinstance(data, list):
-                self._handle_corrupted()
-                return []
-            return self._parse_tasks(data)
+            if isinstance(data, list):
+                # Schema v1: bare list. _dict_to_task defaults the missing tts_backend.
+                return self._parse_tasks(data)
+            if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+                version = data.get("version")
+                if not isinstance(version, int) or version < 1:
+                    self._handle_corrupted()
+                    return []
+                if version > STATE_SCHEMA_VERSION:
+                    return self._preserve_newer_state(version)
+                return self._parse_tasks(data["tasks"])
+            self._handle_corrupted()
+            return []
         except Exception as e:
             logging.warning(f"Failed to load state: {e}")
             self._handle_corrupted()
@@ -135,6 +152,20 @@ class PersistenceService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _preserve_newer_state(self, version: int) -> List[GenerationTask]:
+        """A file from a newer app version must not be misread or silently overwritten."""
+        backup = self._file_path.with_name(f"{self._file_path.name}.v{version}.bak")
+        logging.warning(
+            "State file has unsupported schema version %s (supported: %s); "
+            "keeping a copy at %s and starting with an empty queue.",
+            version, STATE_SCHEMA_VERSION, backup,
+        )
+        try:
+            os.replace(str(self._file_path), str(backup))
+        except OSError as exc:
+            logging.error("Could not back up newer-schema state file: %s", exc)
+        return []
 
     def _parse_tasks(self, data: List[Dict[str, Any]]) -> List[GenerationTask]:
         tasks = []

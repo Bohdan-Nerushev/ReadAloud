@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 PIPER_IMAGE = "rhasspy/wyoming-piper"
 PIPER_DEFAULT_PORT = 10200
+# Compose project / container owned by ReadAloud; nothing else is ever stopped.
+PIPER_COMPOSE_PROJECT = "readaloud"
+PIPER_CONTAINER_NAME = "readaloud-piper"
 DOCKER_COMMAND_TIMEOUT = 30  # seconds for non-pull commands
 DOCKER_PULL_TIMEOUT = 600    # seconds for image pull
 
@@ -211,8 +214,10 @@ class DockerManager:
 
     def stop_piper_compose(self) -> None:
         """
-        Stops the Piper service via docker compose and terminates any running
-        rhasspy/wyoming-piper containers (including standalone docker run instances).
+        Stops the Piper service via docker compose.
+
+        Only the compose project owned by ReadAloud (PIPER_COMPOSE_PROJECT) is
+        touched; containers started by the user from the same image are left alone.
 
         Does NOT raise on failure — logs a warning instead, so the app
         shutdown is not blocked by a stop failure.
@@ -226,26 +231,6 @@ class DockerManager:
                     "docker compose down returned exit code %d: %s",
                     result.returncode, result.stderr.strip(),
                 )
-
-        if shutil.which("docker"):
-            try:
-                res = subprocess.run(
-                    ["docker", "ps", "--filter", f"ancestor={PIPER_IMAGE}", "--format", "{{.ID}}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=DOCKER_COMMAND_TIMEOUT,
-                )
-                container_ids = [c.strip() for c in res.stdout.strip().splitlines() if c.strip()]
-                for cid in container_ids:
-                    logger.info("Stopping leftover Piper container: %s", cid)
-                    subprocess.run(
-                        ["docker", "stop", cid],
-                        capture_output=True,
-                        text=True,
-                        timeout=DOCKER_COMMAND_TIMEOUT,
-                    )
-            except Exception as exc:
-                logger.warning("Failed to stop leftover Piper containers: %s", exc)
 
     def get_container_logs(self, lines: int = 50) -> str:
         """
@@ -292,9 +277,9 @@ class DockerManager:
         Prefers `docker compose` (v2 plugin); falls back to `docker-compose` (v1 legacy).
         """
         if shutil.which("docker") and self._supports_compose_v2():
-            return ["docker", "compose", "-f", str(self._compose_file)]
+            return ["docker", "compose", "-p", PIPER_COMPOSE_PROJECT, "-f", str(self._compose_file)]
         if shutil.which("docker-compose"):
-            return ["docker-compose", "-f", str(self._compose_file)]
+            return ["docker-compose", "-p", PIPER_COMPOSE_PROJECT, "-f", str(self._compose_file)]
         raise PiperNotAvailableException(
             "Neither 'docker compose' (v2) nor 'docker-compose' (v1) is available."
         )

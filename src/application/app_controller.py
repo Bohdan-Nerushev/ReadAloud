@@ -209,6 +209,8 @@ class ApplicationController(QObject):
         self._persistence_service = persistence_service
         self._piper_setup_service = piper_setup_service
         self._xtts_setup_service = xtts_setup_service
+        self._piper_used = False
+        self._shutdown_done = False
 
         # Callable (backend: TtsBackend) -> TtsGeneratorProtocol
         # Allows dynamic switching of the TTS generator per task.
@@ -395,6 +397,7 @@ class ApplicationController(QObject):
 
         # Auto-start Piper Docker container if needed for Piper backend
         if task.config.tts_backend == TtsBackend.PIPER and self._piper_setup_service is not None:
+            self._piper_used = True
             try:
                 prereq = self._piper_setup_service.check_prerequisites(
                     task.config.language, task.config.gender
@@ -831,6 +834,9 @@ class ApplicationController(QObject):
 
     def shutdown(self) -> None:
         """Gracefully stops ongoing processing and saves queue state for next run."""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
         logging.info("Shutting down ApplicationController...")
         self._is_stopped = True
         self._terminate_prep_worker()
@@ -862,28 +868,46 @@ class ApplicationController(QObject):
         if self._xtts_setup_service is None:
             return
         try:
+            if not self._xtts_setup_service.is_model_loaded():
+                return
             logging.info("Application shutting down: unloading XTTS model from VRAM...")
             self._xtts_setup_service.unload_model()
         except Exception as exc:
             logging.warning("Failed to unload XTTS model on shutdown: %s", exc)
 
-    def _auto_stop_piper_if_idle(self) -> None:
-        """Auto-stops Piper container if no pending or processing tasks remain."""
-        if self._piper_setup_service is None:
-            return
-        all_tasks = self._queue_service.get_all_tasks()
-        has_active_or_pending = any(
-            t.status in (TaskStatus.PENDING, TaskStatus.PROCESSING) for t in all_tasks
+    def _has_unfinished_task_for(self, backend: TtsBackend) -> bool:
+        """True if a PENDING/PROCESSING task still needs the given backend."""
+        return any(
+            t.status in (TaskStatus.PENDING, TaskStatus.PROCESSING)
+            and t.config.tts_backend == backend
+            for t in self._queue_service.get_all_tasks()
         )
-        if not has_active_or_pending:
+
+    def _release_idle_backends(self) -> None:
+        """
+        Frees local-engine resources that no remaining task needs.
+
+        Piper's container is stopped only if this app run actually started a Piper task
+        (Docker is never touched for Edge/XTTS-only sessions); the XTTS model is
+        unloaded from VRAM only if it is loaded.
+        """
+        if self._piper_setup_service is not None and self._piper_used \
+                and not self._has_unfinished_task_for(TtsBackend.PIPER):
+            self._piper_used = False
             try:
-                logging.info(
-                    "No active or pending tasks remaining in queue. "
-                    "Auto-stopping Piper Docker container to free resources..."
-                )
+                logging.info("No Piper tasks remaining. Auto-stopping Piper container...")
                 self._piper_setup_service.stop_container()
             except Exception as exc:
                 logging.warning("Auto-stopping Piper container failed: %s", exc)
+
+        if self._xtts_setup_service is not None \
+                and not self._has_unfinished_task_for(TtsBackend.XTTS):
+            try:
+                if self._xtts_setup_service.is_model_loaded():
+                    logging.info("No XTTS tasks remaining. Unloading XTTS model from VRAM...")
+                    self._xtts_setup_service.unload_model()
+            except Exception as exc:
+                logging.warning("Auto-unloading XTTS model failed: %s", exc)
 
     def stop_generation(self) -> None:
         """Stops the audio generation and discards every task (explicit "clear queue")."""
@@ -953,7 +977,7 @@ class ApplicationController(QObject):
         self._save_state(force=True)
         self._process_queue()
         self._emit_global_progress()
-        self._auto_stop_piper_if_idle()
+        self._release_idle_backends()
 
     def _save_state(self, force: bool = False) -> None:
         """Saves current queue state to persistence with 3-second throttling unless forced."""

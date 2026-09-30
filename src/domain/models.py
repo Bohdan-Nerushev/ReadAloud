@@ -43,6 +43,17 @@ class ProjectConfig:
     speed: float = 1.0
     tts_backend: TtsBackend = TtsBackend.EDGE_TTS
 
+    @property
+    def effective_thread_count(self) -> int:
+        """
+        Worker threads actually used. Local engines (Piper, XTTS) run one worker:
+        they share a single container / GPU model, so parallel batches only
+        cause OOM or contention. Only the cloud engine honours thread_count.
+        """
+        if self.tts_backend == TtsBackend.EDGE_TTS:
+            return self.thread_count
+        return 1
+
     def __post_init__(
             self
     ) -> None:

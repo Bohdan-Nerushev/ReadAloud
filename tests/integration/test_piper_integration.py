@@ -35,7 +35,7 @@ from src.infrastructure.piper_model_manager import PiperModelManager, DEFAULT_MO
 
 PIPER_TESTS_ENABLED = os.environ.get("PIPER_INTEGRATION_TESTS", "0") == "1"
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.docker]
 
 
 def _is_port_open(port: int = PIPER_DEFAULT_PORT) -> bool:

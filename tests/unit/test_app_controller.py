@@ -69,8 +69,13 @@ class TestAppController(unittest.TestCase):
         self.patcher_exists.stop()
         self.patcher_is_file.stop()
 
-    def test_orchestration_flow_add_task(self):
-        """test_orchestration_flow_add_task: Verifies that QueueService is called when a task is added."""
+    @patch('src.application.app_controller.PreparationWorker')
+    def test_orchestration_flow_add_task(self, _mock_worker_class):
+        """test_orchestration_flow_add_task: Verifies that QueueService is called when a task is added.
+
+        The worker is patched: add_task starts the queue, and a real background thread working
+        on MagicMock data can close the interpreter's stdout file descriptor.
+        """
         self.controller.add_task(self.config)
         self.queue_service.add_task.assert_called_once()
         
