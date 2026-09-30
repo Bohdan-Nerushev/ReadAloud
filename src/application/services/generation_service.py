@@ -16,7 +16,7 @@ Changes vs. original:
 import functools
 import logging
 import threading
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -109,6 +109,7 @@ class GenerationService(QObject):
             self._cancel_generator()
             self._thread_manager.stop()
         self._next_generation_id()
+        self._set_generator_paused(False)
         if hasattr(self._audio_generator, "last_error"):
             self._audio_generator.last_error = None
 
@@ -172,14 +173,25 @@ class GenerationService(QObject):
 
         if self._thread_manager.is_paused():
             self._thread_manager.resume()
+            self._set_generator_paused(False)
             if self._progress_tracker:
                 self._progress_tracker.resume()
             return False
         else:
             self._thread_manager.pause()
+            self._set_generator_paused(True)
             if self._progress_tracker:
                 self._progress_tracker.pause()
             return True
+
+    def _set_generator_paused(self, paused: bool) -> None:
+        """Propagates pause/resume into a batch that is already running inside the generator."""
+        method = getattr(self._audio_generator, "pause" if paused else "resume", None)
+        if callable(method):
+            try:
+                method()
+            except Exception as exc:
+                logging.warning("Generator pause/resume failed: %s", exc)
 
     def is_paused(self) -> bool:
         """Returns True if generation is currently paused."""
@@ -308,15 +320,21 @@ class GenerationService(QObject):
             len(batch), type(self._audio_generator).__name__, language, gender, max_workers,
         )
 
+        succeeded: Set[int] = set()
+
+        def _on_chunk(chunk_number: int, file_path: str, duration: float) -> None:
+            succeeded.add(chunk_number)
+            self._on_chunk_generated_callback(
+                chunk_number, file_path, duration, generation_id=generation_id
+            )
+
         try:
             results = self._audio_generator.generate_audio_batch(
                 batch,
                 language,
                 gender,
                 output_dir,
-                chunk_callback=functools.partial(
-                    self._on_chunk_generated_callback, generation_id=generation_id
-                ),
+                chunk_callback=_on_chunk,
                 max_workers=max_workers,
                 max_retries=max_retries
             )
@@ -363,8 +381,12 @@ class GenerationService(QObject):
                 self.generationAborted.emit(getattr(e, "message", None) or str(e))
                 return
             if not self._is_stopped:
-                self.batchFailed.emit(batch, str(e))
-                for chunk in batch:
+                # Chunks that were delivered before the batch blew up are already counted
+                # as successes; only the rest of the batch failed.
+                unfinished = [c for c in batch if c.chunk_number not in succeeded]
+                if unfinished:
+                    self.batchFailed.emit(unfinished, str(e))
+                for chunk in unfinished:
                     self._update_internal_progress(success=False, chunk_number=chunk.chunk_number)
 
     def _update_internal_progress(self, success: bool, chunk_number: Optional[int] = None) -> None:

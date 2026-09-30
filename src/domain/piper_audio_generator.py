@@ -333,6 +333,7 @@ class PiperAudioGenerator(CancellableBatchMixin):
 
                     idx, chunk = item
                     try:
+                        await self._await_resume()
                         res = await self._generate_one_with_retry(
                             chunk=chunk,
                             voice=voice,
@@ -394,6 +395,7 @@ class PiperAudioGenerator(CancellableBatchMixin):
         refused_in_a_row = 0
 
         for attempt in range(max_retries):
+            await self._await_resume()
             try:
                 output_path.mkdir(parents=True, exist_ok=True)
                 mp3_path = output_path / f"{chunk.chunk_number}.mp3"

@@ -21,7 +21,7 @@ class TtsBackend(Enum):
     EDGE_TTS: Microsoft Edge TTS (cloud, default). Requires internet connection.
     PIPER:    Local synthesis via rhasspy/wyoming-piper Docker container.
               Requires Docker and downloaded voice model files.
-    XTTS:     Local neural TTS via Coqui XTTS-v2 with GPU acceleration (PyTorch CUDA FP16).
+    XTTS:     Local neural TTS via Coqui XTTS-v2 with GPU acceleration (PyTorch CUDA, full FP32 precision).
               Requires NVIDIA GPU with ≥4 GB VRAM and installed TTS package.
     """
     EDGE_TTS = "edge_tts"

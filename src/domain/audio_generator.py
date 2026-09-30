@@ -367,6 +367,7 @@ class AudioGenerator(CancellableBatchMixin):
 
                     idx, chunk = item
                     try:
+                        await self._await_resume()
                         res = await self._generate_one_with_retry(
                             chunk, voice, output_path,
                             max_retries=max_retries,
@@ -440,6 +441,7 @@ class AudioGenerator(CancellableBatchMixin):
         last_exception: Optional[BaseException] = None
 
         for attempt in range(max_retries):
+            await self._await_resume()
             try:
                 # Check global rate-limit pause
                 now = asyncio.get_event_loop().time()

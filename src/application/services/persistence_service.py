@@ -119,7 +119,7 @@ class PersistenceService:
                 manifest_path = target_dir / "manifest.json"
                 tmp_path = target_dir / f"manifest.json.{uuid.uuid4().hex}.tmp"
 
-                payload = json.dumps(manifest_data, indent=4, ensure_ascii=False)
+                payload = json.dumps(manifest_data, ensure_ascii=False, separators=(",", ":"))
                 tmp_path.write_text(payload, encoding="utf-8")
                 os.replace(str(tmp_path), str(manifest_path))
                 logging.debug(f"Manifest saved atomically in {directory}.")

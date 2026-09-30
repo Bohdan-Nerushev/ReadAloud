@@ -90,6 +90,11 @@ class BackendNotReadyException(ReadAloudException):
     pass
 
 
+class InsufficientDiskSpaceException(ReadAloudException):
+    """Raised before generation when the disk cannot hold the expected audio files."""
+    pass
+
+
 class PiperNotAvailableException(ReadAloudException):
     """
     Raised when Docker daemon or the Piper Docker image is not available.
@@ -187,6 +192,7 @@ def is_fatal_setup_error(exc: BaseException) -> bool:
     """
     return isinstance(exc, (
         BackendNotReadyException,
+        InsufficientDiskSpaceException,
         PiperNotAvailableException,
         PiperModelMissingException,
         XttsNotAvailableException,

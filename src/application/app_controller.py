@@ -19,6 +19,8 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread
 from src.domain.models import ProjectConfig, AudioChunk, GenerationTask, TaskStatus, TtsBackend
 from src.domain.text_processor import TextProcessor
 from src.domain.text_chunker import TextChunker
+from src.domain.audio_utils import get_mp3_duration
+from src.infrastructure.disk_space import ensure_free_space
 from src.domain.tts_generator_protocol import TtsGeneratorProtocol
 import os
 from src.infrastructure.file_manager import FileManager
@@ -149,6 +151,11 @@ class PreparationWorker(QThread):
                 return
 
             workspace_dir = self.resolve_workspace_dir(self.config)
+            ensure_free_space(
+                sum(len(c.text_content) for c in chunks),
+                workspace_dir,
+                self.config.output_dir_path,
+            )
             text_dir = self.file_manager.create_timestamped_dir("text", workspace_dir)
             audio_dir = self.file_manager.create_timestamped_dir("audio", workspace_dir)
             
@@ -256,6 +263,9 @@ class ApplicationController(QObject):
 
         self._text_dir: Optional[str] = None
         self._audio_dir: Optional[str] = None
+        self._last_manifest_write: float = float('-inf')
+        # Stateless on purpose: restoring progress must not depend on which generator was last active.
+        self._duration_reader: Callable[[str], float] = get_mp3_duration
         self._chunks: List[AudioChunk] = []
         self._audio_files: List[Optional[str]] = []
 
@@ -392,6 +402,7 @@ class ApplicationController(QObject):
             self._chunks = chunks
             self._text_dir = text_dir
             self._audio_dir = audio_dir
+            self._last_manifest_write = float('-inf')
             self._audio_files = [None] * len(chunks)
 
             # Reset assembly service
@@ -625,7 +636,7 @@ class ApplicationController(QObject):
                         task.config.speed,
                         str(task.id)
                     )
-            self._update_task_manifest()
+            self._update_task_manifest(force=batch_index is not None)
 
     def _on_chunk_failed(self, chunk_number: int, error_msg: str) -> None:
         """Callback when a chunk fails permanently after retries."""
@@ -647,21 +658,32 @@ class ApplicationController(QObject):
                         task.config.speed,
                         str(task.id)
                     )
-            self._update_task_manifest()
+            self._update_task_manifest(force=batch_index is not None)
 
-    def _update_task_manifest(self) -> None:
-        """Saves current chunk and batch progress to manifest.json."""
+    MANIFEST_MIN_INTERVAL_SECONDS = 2.0
+
+    def _update_task_manifest(self, force: bool = False) -> None:
+        """
+        Saves a progress checkpoint to manifest.json.
+
+        Rewriting the file after every chunk makes the total I/O quadratic for big books,
+        so writes are throttled. ``force`` is used at moments that matter (batch complete,
+        task failure). The chunk and audio files on disk stay the source of truth on restore.
+        """
         task = self._get_current_task()
         if not task or not self._audio_dir:
+            return
+        now = time.monotonic()
+        if not force and (now - self._last_manifest_write) < self.MANIFEST_MIN_INTERVAL_SECONDS:
             return
         manifest_data = {
             "task_id": str(task.id),
             "updated_at": datetime.now().isoformat(),
             "total_chunks": len(self._chunks),
-            "completed_count": sum(1 for f in self._audio_files if f is not None),
-            "audio_files": self._audio_files,
+            "completed_chunks": [i + 1 for i, f in enumerate(self._audio_files) if f is not None],
         }
-        self._persistence_service.save_manifest(self._audio_dir, manifest_data)
+        if self._persistence_service.save_manifest(self._audio_dir, manifest_data):
+            self._last_manifest_write = now
 
     def _on_batch_generated(self, results: List[tuple]) -> None:
         """Callback for batch generation results to ensure no chunks are missed."""
@@ -829,6 +851,7 @@ class ApplicationController(QObject):
             daemon thread would then call ``_mark_task_completed`` which emits
             signals and mutates the (now-dead) queue service.
         """
+        error: Optional[Exception] = None
         try:
             self._assembly_service.assemble_final(
                 output_path,
@@ -836,19 +859,31 @@ class ApplicationController(QObject):
                 speed,
                 correlation_id
             )
-            # Only advance the pipeline state if we were not stopped mid-assembly
-            if not self._is_stopped:
-                self._cleanup_temp_files()
-                self._mark_task_completed()
-            else:
-                logging.info(
-                    "Assembly completed but pipeline was stopped — skipping task completion."
-                )
         except Exception as e:
-            if not self._is_stopped:
-                self._handle_assembly_error(e)
+            error = e
+        # Queue/timer/thread objects belong to the GUI thread: hand the outcome over instead
+        # of touching them from this worker.
+        self._post_to_gui(lambda: self._on_assembly_finished(correlation_id, error))
+
+    def _post_to_gui(self, fn: Callable[[], None]) -> None:
+        """Runs ``fn`` on the GUI thread (queued through the bridge when called from elsewhere)."""
+        self._bridge.finished.emit(lambda _unused: fn(), None)
+
+    def _on_assembly_finished(self, task_id: str, error: Optional[Exception]) -> None:
+        """GUI-thread continuation of the assembly worker."""
+        current = self._get_current_task()
+        if self._is_stopped or current is None or str(current.id) != task_id:
+            # Stopped, cancelled, or superseded by another task while ffmpeg ran.
+            if error is not None:
+                logging.info(f"Assembly error ignored (pipeline stopped): {error}")
             else:
-                logging.info(f"Assembly error ignored (pipeline stopped): {e}")
+                logging.info("Assembly completed but pipeline was stopped — skipping task completion.")
+            return
+        if error is not None:
+            self._handle_assembly_error(error)
+            return
+        self._cleanup_temp_files()
+        self._mark_task_completed()
 
     def _on_assembly_progress(self, percentage: float, remaining: float) -> None:
         """Callback for assembly progress signals."""
@@ -1067,6 +1102,7 @@ class ApplicationController(QObject):
         resumes from the chunks already synthesized); they are removed when the user deletes it.
         """
         self._is_stopped = True
+        self._update_task_manifest(force=True)
         self._queue_service.update_task_status(TaskStatus.FAILED, error_msg)
         self.errorOccurred.emit(error_msg)
         # Keep in-flight workers of the dead task from reporting into the next one.
@@ -1175,6 +1211,7 @@ class ApplicationController(QObject):
             self._chunks = chunks
             self._text_dir = task.text_dir
             self._audio_dir = task.audio_dir
+            self._last_manifest_write = float('-inf')
             self._audio_files = [None] * len(chunks)
             self._retry_sweep_count = 0
             self._retry_in_progress = False
@@ -1184,7 +1221,7 @@ class ApplicationController(QObject):
             for idx, c in enumerate(self._chunks):
                 chunk_audio = audio_path / f"{c.chunk_number}.mp3"
                 if chunk_audio.exists() and chunk_audio.stat().st_size > 0:
-                    duration = self._generation_service._audio_generator._get_file_duration_fast(str(chunk_audio))
+                    duration = self._duration_reader(str(chunk_audio))
                     if duration > 0.0:
                         self._audio_files[idx] = str(chunk_audio.absolute())
                         self._chunks[idx] = c.with_audio_path(str(chunk_audio.absolute()), duration)
@@ -1193,7 +1230,7 @@ class ApplicationController(QObject):
                         if batch_index is not None:
                             part_path = audio_path / f"part_{batch_index}.mp3"
                             part_dur = (
-                                self._generation_service._audio_generator._get_file_duration_fast(str(part_path))
+                                self._duration_reader(str(part_path))
                                 if (part_path.exists() and part_path.stat().st_size > 0) else 0.0
                             )
                             if part_dur > 0.0:

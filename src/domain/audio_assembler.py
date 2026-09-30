@@ -47,8 +47,16 @@ class AudioAssembler:
         """Initialize the AudioAssembler."""
         self._active_processes: Set[subprocess.Popen] = set()
         self._lock = threading.Lock()
-        self._stopped = False
+        # stop() bumps the epoch; every assembly remembers the epoch it started in (per thread),
+        # so one assembly starting can never swallow a stop() aimed at another running in parallel.
+        self._stop_epoch = 0
+        self._local = threading.local()
     
+    @property
+    def _stopped(self) -> bool:
+        """True if stop() was called since the current thread's assembly started."""
+        return self._stop_epoch != getattr(self._local, 'epoch', self._stop_epoch)
+
     def assemble_audio(
             self,
             audio_files: List[str],
@@ -66,7 +74,8 @@ class AudioAssembler:
         if speed <= 0:
             raise ValueError(f"Speed must be positive, got: {speed}")
         
-        self._stopped = False
+        with self._lock:
+            self._local.epoch = self._stop_epoch
         output_file_path = Path(output_path)
         output_dir = output_file_path.parent
             
@@ -137,7 +146,7 @@ class AudioAssembler:
         copy_codec: bool
     ) -> List[str]:
         cmd = [
-            'ffmpeg', '-f', 'concat', '-safe', '0', '-i', str(list_path)
+            'ffmpeg', '-nostdin', '-f', 'concat', '-safe', '0', '-i', str(list_path)
         ]
         if copy_codec:
             cmd.extend(['-c', 'copy'])
@@ -155,8 +164,10 @@ class AudioAssembler:
         speed: float, 
         callback: callable
     ) -> None:
+        if self._stopped:
+            raise Exception("ffmpeg process was cancelled before it started")
         process = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
         )
         with self._lock:
             self._active_processes.add(process)
@@ -237,7 +248,7 @@ class AudioAssembler:
     def stop(self) -> None:
         """Stops all active ffmpeg processes managed by this instance."""
         with self._lock:
-            self._stopped = True
+            self._stop_epoch += 1
             for p in list(self._active_processes):
                 try:
                     p.terminate()

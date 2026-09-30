@@ -25,7 +25,7 @@ A high-performance Python & PyQt6 desktop application powered by Microsoft Edge 
 
 - **Python**: 3.12 or higher
 - **FFmpeg**: Essential for audio stream assembly, speed adjustments, and format conversion.
-- **NVIDIA GPU & CUDA 12.x** *(Optional)*: Required for local Coqui XTTS-v2 FP16 synthesis with voice cloning (>=4 GB VRAM recommended).
+- **NVIDIA GPU & CUDA 12.x** *(Optional)*: Required for local Coqui XTTS-v2 synthesis with voice cloning (>=4 GB VRAM recommended).
 - **Docker** *(Optional)*: Required only if using local neural TTS (Piper).
 - **libxcb-cursor**: Required for GUI cursor management.
 - **OS**: Linux (tested on Ubuntu / Debian / Arch).
@@ -48,7 +48,7 @@ ReadAloud provides three TTS synthesis engines:
 
 3. **Coqui XTTS-v2 (Local GPU Neural TTS & Voice Cloning - Optional)**:
    - State-of-the-art neural TTS with instant voice cloning from a 5–30 second audio sample (`speaker.wav`).
-   - **Hardware Acceleration**: Executes locally on your NVIDIA GPU using PyTorch CUDA FP16.
+   - **Hardware Acceleration**: Executes locally on your NVIDIA GPU using PyTorch CUDA (full FP32 precision).
    - **100% Offline & Private**: Model weights run locally without external cloud calls.
    - **Supported Languages**: English, Ukrainian, German, Russian (`en`, `uk`, `de`, `ru`).
 

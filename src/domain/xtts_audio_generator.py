@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
+from src.domain.cancellable_batch import PausableMixin
 from src.domain.exceptions import (
     FatalGenerationException,
     TransientGenerationException,
@@ -67,7 +68,7 @@ _DEFAULT_MAX_RETRIES: int = 3
 _DEFAULT_BACKOFF: float = 2.0
 
 
-class XttsAudioGenerator:
+class XttsAudioGenerator(PausableMixin):
     """
     TTS generator that synthesises audio locally via Coqui XTTS-v2.
 
@@ -111,6 +112,7 @@ class XttsAudioGenerator:
         self._model = None  # type: Optional[object]  # TTS instance, loaded lazily
         self._model_loaded: bool = False
         self._cancel_epoch = 0
+        self._init_pause()
         self.last_error: Optional[str] = None
 
     # ------------------------------------------------------------------
@@ -135,6 +137,7 @@ class XttsAudioGenerator:
         A synthesis call already inside ``model.tts`` cannot be interrupted and finishes first.
         """
         self._cancel_epoch += 1
+        self._paused.clear()
 
     def generate_audio_batch(
             self,
@@ -196,6 +199,7 @@ class XttsAudioGenerator:
         epoch = self._cancel_epoch
 
         for idx, chunk in enumerate(chunks):
+            self._wait_while_paused(lambda: self._cancel_epoch != epoch)
             if self._cancel_epoch != epoch:
                 logger.info("[XTTS] Batch cancelled before chunk %d.", chunk.chunk_number)
                 break
@@ -264,7 +268,7 @@ class XttsAudioGenerator:
             if self._model_loaded:
                 return
             logger.info(
-                "[XTTS] Loading XTTS-v2 model onto GPU (FP16). This may take 30-60 s. "
+                "[XTTS] Loading XTTS-v2 model onto GPU (FP32, no half-precision conversion). This may take 30-60 s. "
                 "Backend: XTTS-v2 (Local GPU)."
             )
             try:
@@ -349,6 +353,7 @@ class XttsAudioGenerator:
         last_exception: Optional[BaseException] = None
 
         for attempt in range(max_retries):
+            self._wait_while_paused(lambda: epoch is not None and self._cancel_epoch != epoch)
             if epoch is not None and self._cancel_epoch != epoch:
                 raise FatalGenerationException(f"Chunk {chunk.chunk_number} cancelled")
             try:

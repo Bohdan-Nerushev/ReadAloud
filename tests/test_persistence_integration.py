@@ -35,7 +35,6 @@ class TestPersistenceIntegration(unittest.TestCase):
         self.file_manager = FileManager()
 
         self.mock_generator = MagicMock()
-        self.mock_generator._get_file_duration_fast.return_value = 2.5
 
         self.generation_service = GenerationService(self.mock_generator)
         self.assembly_service = AssemblyService(MagicMock())
@@ -49,6 +48,8 @@ class TestPersistenceIntegration(unittest.TestCase):
             assembly_service=self.assembly_service,
             persistence_service=self.persistence_service
         )
+        # Durations are read by a stateless helper, independent of any generator
+        self.controller._duration_reader = lambda path: 2.5
 
         input_file = os.path.join(self.temp_dir, "input.txt")
         with open(input_file, "w", encoding="utf-8") as f:

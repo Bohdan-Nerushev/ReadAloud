@@ -218,6 +218,11 @@ class PiperSetupService(QObject):
             )
         prereq = self.check_prerequisites(language, gender)
         if prereq.container_running:
+            # The running server may have been started for another voice; it loads voices on
+            # request from the models directory, so the requested one must be on disk.
+            voice = self._model_manager.get_voice_for_language(language, gender)
+            if not self._model_manager.is_model_present(voice):
+                self._download_model_or_raise(language, gender)
             return
         if not prereq.docker_available:
             raise BackendNotReadyException(

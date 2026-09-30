@@ -3,7 +3,7 @@ XTTS Model Manager.
 
 Infrastructure component responsible for:
   - Checking CUDA availability via PyTorch.
-  - Verifying free VRAM meets the FP16 minimum threshold (default 4 GB).
+  - Verifying free VRAM meets the minimum threshold (default 4 GB).
   - Detecting whether the TTS Python package is installed.
   - Detecting whether the XTTS-v2 model weights are cached locally.
   - Resolving paths to speaker reference WAV files (for voice cloning).
@@ -29,7 +29,7 @@ from src.domain.exceptions import XttsReferenceAudioMissingException
 
 logger = logging.getLogger(__name__)
 
-# Default VRAM minimum for XTTS-v2 in FP16 mode.
+# Default VRAM minimum for XTTS-v2 (runs in full FP32 precision, no half-precision conversion).
 # The model itself uses ~3.2 GB; 4 GB leaves ~0.8 GB headroom for activations.
 MIN_VRAM_GB: float = 4.0
 
@@ -113,7 +113,7 @@ class XttsModelManager:
         Args:
             speakers_dir: Base directory for speaker reference WAV files.
                           Defaults to <project_root>/data/xtts_speakers/.
-            min_vram_gb:  Minimum free VRAM in GB required for FP16 inference.
+            min_vram_gb:  Minimum free VRAM in GB required for inference.
         """
         if speakers_dir is None:
             # Resolve relative to the project root (two levels up from src/infrastructure/).
@@ -162,7 +162,7 @@ class XttsModelManager:
         if not result.vram_sufficient:
             result.error_message = (
                 f"Insufficient free VRAM: {vram_free:.1f} GB free, "
-                f"{self._min_vram_gb:.1f} GB required for FP16 inference. "
+                f"{self._min_vram_gb:.1f} GB required for inference. "
                 f"Close other GPU-intensive applications and try again."
             )
 
@@ -305,8 +305,20 @@ class XttsModelManager:
         try:
             import torch
             if torch.cuda.is_available():
+                before = torch.cuda.memory_allocated()
+                torch.cuda.synchronize()
                 torch.cuda.empty_cache()
-                logger.debug("CUDA memory cache flushed.")
+                torch.cuda.ipc_collect()
+                after = torch.cuda.memory_allocated()
+                logger.info(
+                    "CUDA cache flushed. Allocated tensors: %.2f GB -> %.2f GB.",
+                    before / 1024 ** 3, after / 1024 ** 3,
+                )
+                if after > 0:
+                    logger.warning(
+                        "%.2f GB of CUDA memory is still held by live tensors after unload; "
+                        "something keeps a reference to the model.", after / 1024 ** 3,
+                    )
         except ImportError:
             pass
         except Exception as exc:
