@@ -16,7 +16,7 @@ import html
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -37,6 +37,8 @@ from src.infrastructure.xtts_model_manager import XttsDiagnosticsResult
 from src.gui.styles import Styles
 
 logger = logging.getLogger(__name__)
+
+MODEL_STATE_POLL_MS = 500
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +223,13 @@ class TtsBackendSelector(QWidget):
         self._btn_xtts_recheck.clicked.connect(self._run_xtts_check)
         self._btn_xtts_download.clicked.connect(lambda: self._run_xtts_action("download"))
         self._btn_xtts_unload.clicked.connect(lambda: self._run_xtts_action("unload"))
+
+        # The model is loaded/unloaded by background threads (task start, auto-release after the
+        # queue), so the indicator follows the real state instead of relying on UI events.
+        self._model_state_timer = QTimer(self)
+        self._model_state_timer.setInterval(MODEL_STATE_POLL_MS)
+        self._model_state_timer.timeout.connect(self._poll_xtts_model_state)
+        self._model_state_timer.start()
 
     _PANEL_STYLE = """
         QFrame#StatusPanel {
@@ -574,6 +583,10 @@ class TtsBackendSelector(QWidget):
         """Called by the main window when the queue starts/stops processing."""
         self._generation_active = active
         self.refresh_xtts_model_state()
+
+    def _poll_xtts_model_state(self) -> None:
+        if self._xtts_panel.isVisible() and not self._xtts_busy:
+            self.refresh_xtts_model_state()
 
     def refresh_xtts_model_state(self) -> None:
         """Re-reads the loaded state and updates the indicator and Unload button."""

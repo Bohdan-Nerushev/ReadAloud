@@ -138,9 +138,15 @@ class PiperSetupService(QObject):
         result.image_available = self._docker_manager.is_piper_image_available()
 
         # 3. Container running check
-        result.container_running = self._docker_manager.is_piper_port_open(self._piper_port)
+        port_open = self._docker_manager.is_piper_port_open(self._piper_port)
+        # An open port only proves a Piper container if nobody else owns it.
+        foreign_owner = port_open and self._docker_manager.is_port_occupied_by_other(self._piper_port)
+        result.container_running = port_open and not foreign_owner
 
-        if result.container_running:
+        if foreign_owner:
+            result.port_conflict = True
+            result.error_message = f"Port {self._piper_port} is occupied by another process."
+        elif result.container_running:
             # If the Piper container is open and responding, it is actively serving synthesis.
             result.port_conflict = False
             result.model_present = True
