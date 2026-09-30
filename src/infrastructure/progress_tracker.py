@@ -5,7 +5,7 @@ This module handles tracking progress of audio generation and estimating complet
 """
 
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Iterable, List, Optional, Set
 import threading
 
 
@@ -37,6 +37,10 @@ class ProgressTracker:
         self._total_chunks: int = total_chunks
         self._completed_chunks: int = 0
         self._failed_chunks: int = 0
+        # Per-chunk bookkeeping: a chunk is either completed or failed, never both,
+        # and reporting the same chunk twice never inflates the counters.
+        self._completed_ids: Set[int] = set()
+        self._failed_ids: Set[int] = set()
         self._start_time: Optional[datetime] = None
         self._pause_start_time: Optional[datetime] = None
         self._total_paused_duration: timedelta = timedelta()
@@ -51,11 +55,30 @@ class ProgressTracker:
             self._total_paused_duration = timedelta()
             self._recent_timings = []
             self._completed_chunks = completed_chunks
+            self._completed_ids.clear()
+            self._failed_ids.clear()
 
     def reset_completed_count(self, completed_chunks: int) -> None:
         """Resets completed chunks counter to reflect actual valid chunks."""
         with self._lock:
             self._completed_chunks = max(0, min(completed_chunks, self._total_chunks))
+
+    def begin_retry(self, chunk_numbers: Iterable[int]) -> None:
+        """
+        Marks the given chunks as "in flight again" for a retry sweep.
+
+        They stop counting as completed or failed, so ``processed`` drops below
+        ``total`` until every one of them reports a fresh result. This is what
+        keeps completion monitors from mistaking an unfinished sweep for a
+        finished generation.
+        """
+        ids = set(chunk_numbers)
+        with self._lock:
+            self._completed_ids -= ids
+            self._failed_ids -= ids
+            room = self._total_chunks - len(ids) - len(self._completed_ids) - len(self._failed_ids)
+            self._completed_chunks = max(0, min(self._completed_chunks, room))
+            self._failed_chunks = max(0, min(self._failed_chunks, room - self._completed_chunks))
 
 
     def pause(self) -> None:
@@ -73,25 +96,46 @@ class ProgressTracker:
     
     def update_progress(
             self,
-            success: bool
+            success: bool,
+            chunk_number: Optional[int] = None
     ) -> None:
         """
         Updates progress counters.
-        
+
         Args:
             success: True if the chunk was processed successfully, False otherwise
+            chunk_number: Identifier of the chunk. When given, results are
+                idempotent per chunk: a repeated result is ignored, a late
+                success replaces an earlier failure and a failure never
+                overrides an earlier success.
         """
         with self._lock:
-            if success:
-                self._completed_chunks += 1
+            if chunk_number is None:
+                if success:
+                    self._completed_chunks += 1
+                else:
+                    self._failed_chunks += 1
+            elif success:
+                if chunk_number in self._completed_ids:
+                    return
+                self._failed_ids.discard(chunk_number)
+                self._completed_ids.add(chunk_number)
             else:
-                self._failed_chunks += 1
-            
+                if chunk_number in self._completed_ids or chunk_number in self._failed_ids:
+                    return
+                self._failed_ids.add(chunk_number)
+
             # Record timing for windowed average
             self._recent_timings.append(datetime.now())
             if len(self._recent_timings) > self._max_recent_timings:
                 self._recent_timings.pop(0)
-    
+
+    def _completed_total(self) -> int:
+        return self._completed_chunks + len(self._completed_ids)
+
+    def _failed_total(self) -> int:
+        return self._failed_chunks + len(self._failed_ids)
+
     def get_progress_percentage(
             self
     ) -> float:
@@ -104,7 +148,7 @@ class ProgressTracker:
         with self._lock:
             if self._total_chunks == 0:
                 return 0.0
-            processed = self._completed_chunks + self._failed_chunks
+            processed = self._completed_total() + self._failed_total()
             return (processed / self._total_chunks) * 100.0
     
     def get_completed_count(
@@ -117,7 +161,7 @@ class ProgressTracker:
             Count of completed chunks
         """
         with self._lock:
-            return self._completed_chunks
+            return self._completed_total()
     
     def get_total_count(
             self
@@ -142,7 +186,7 @@ class ProgressTracker:
             Estimated completion datetime, or None if estimation is not possible
         """
         with self._lock:
-            processed_count = self._completed_chunks + self._failed_chunks
+            processed_count = self._completed_total() + self._failed_total()
             if self._start_time is None or processed_count == 0:
                 return None
             
@@ -165,7 +209,7 @@ class ProgressTracker:
 
     def _calculate_global_average(self) -> timedelta:
         """Calculates average time per chunk since start, excluding pause time."""
-        processed_count = self._completed_chunks + self._failed_chunks
+        processed_count = self._completed_total() + self._failed_total()
         if processed_count == 0:
             return timedelta()
             
@@ -226,7 +270,7 @@ class ProgressTracker:
             Count of processed chunks
         """
         with self._lock:
-            return self._completed_chunks + self._failed_chunks
+            return self._completed_total() + self._failed_total()
     
     def get_failed_count(
             self
@@ -238,4 +282,4 @@ class ProgressTracker:
             Count of failed chunks
         """
         with self._lock:
-            return self._failed_chunks
+            return self._failed_total()
