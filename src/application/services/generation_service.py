@@ -111,9 +111,8 @@ class GenerationService(QObject):
             return
 
         logging.info(f"Executing retry sweep for {len(chunks_to_retry)} chunk(s)...")
-        if self._progress_tracker and self._chunks:
-            valid_completed = max(0, len(self._chunks) - len(chunks_to_retry))
-            self._progress_tracker.reset_completed_count(valid_completed)
+        if self._progress_tracker:
+            self._progress_tracker.begin_retry(c.chunk_number for c in chunks_to_retry)
 
         correlation_id = str(task.id)
         max_workers = min(task.config.thread_count, len(chunks_to_retry))
@@ -221,7 +220,7 @@ class GenerationService(QObject):
             return
         logging.debug(f"Chunk {chunk_number} generated: {file_path} ({duration:.2f}s)")
         self.chunkGenerated.emit(chunk_number, file_path, duration)
-        self._update_internal_progress(success=True)
+        self._update_internal_progress(success=True, chunk_number=chunk_number)
 
     def _generate_batch_safe(
             self,
@@ -266,7 +265,7 @@ class GenerationService(QObject):
                 if result is None:
                     # This chunk failed after all retries — log and count failure, but do NOT abort pipeline
                     failed_chunks.append(chunk)
-                    self._update_internal_progress(success=False)
+                    self._update_internal_progress(success=False, chunk_number=chunk.chunk_number)
                     logging.warning(
                         f"Chunk {chunk.chunk_number} permanently failed — "
                         "skipping and continuing pipeline."
@@ -292,10 +291,10 @@ class GenerationService(QObject):
             logging.error(f"Unexpected error in batch generation ({type(self._audio_generator).__name__}): {e}", exc_info=True)
             if not self._is_stopped:
                 self.batchFailed.emit(batch, str(e))
-                for _ in batch:
-                    self._update_internal_progress(success=False)
+                for chunk in batch:
+                    self._update_internal_progress(success=False, chunk_number=chunk.chunk_number)
 
-    def _update_internal_progress(self, success: bool) -> None:
+    def _update_internal_progress(self, success: bool, chunk_number: Optional[int] = None) -> None:
         """Updates the progress tracker."""
         if self._progress_tracker:
-            self._progress_tracker.update_progress(success)
+            self._progress_tracker.update_progress(success, chunk_number)

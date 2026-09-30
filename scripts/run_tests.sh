@@ -30,6 +30,10 @@ PYTHONPATH=. ./venv/bin/python3 -m unittest \
     tests/unit/test_app_controller.py \
     tests/unit/test_audio_assembler.py \
     tests/unit/test_persistence_service.py \
+    tests/unit/test_progress_tracker_retry.py \
+    tests/unit/test_queue_service_failed_tasks.py \
+    tests/unit/test_controller_task_lifecycle.py \
+    tests/unit/test_controller_retry_sweeps.py \
     tests/test_queue.py \
     tests/test_persistence_integration.py \
     tests/test_optimization.py \

@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from src.domain.models import ProjectConfig, GenerationTask, TaskStatus
+from src.domain.models import ProjectConfig, GenerationTask, TaskStatus, TtsBackend
 
 
 class PersistenceService:
@@ -176,7 +176,8 @@ class PersistenceService:
                 "gender": task.config.gender,
                 "thread_count": task.config.thread_count,
                 "output_dir_path": task.config.output_dir_path,
-                "speed": task.config.speed
+                "speed": task.config.speed,
+                "tts_backend": task.config.tts_backend.value
             }
         }
 
@@ -198,7 +199,9 @@ class PersistenceService:
                 gender=cfg_data["gender"],
                 thread_count=cfg_data["thread_count"],
                 output_dir_path=cfg_data["output_dir_path"],
-                speed=cfg_data["speed"]
+                speed=cfg_data["speed"],
+                # Files written before the backend was persisted have no key: they were Edge tasks.
+                tts_backend=TtsBackend(cfg_data.get("tts_backend", TtsBackend.EDGE_TTS.value))
             )
             task = GenerationTask(
                 config=config,
