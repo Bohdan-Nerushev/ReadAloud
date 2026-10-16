@@ -21,6 +21,7 @@ import io
 import logging
 import os
 import random
+import re
 import threading
 import wave
 from pathlib import Path
@@ -31,6 +32,7 @@ from wyoming.audio import AudioStart, AudioStop
 from wyoming.client import AsyncTcpClient
 from wyoming.tts import Synthesize, SynthesizeVoice
 
+from src.constants import NON_SPEECH_SILENCE_SECONDS
 from src.domain.exceptions import (
     FatalGenerationException,
     PiperConnectionException,
@@ -174,6 +176,15 @@ class PiperAudioGenerator(AsyncLoopHostMixin, BaseAudioGenerator):
     def _on_loop_started(self) -> None:
         # max_concurrency=1: one synthesis at a time (Piper is single-threaded)
         self._semaphore = asyncio.Semaphore(1)
+
+    @property
+    def port(self) -> int:
+        """Wyoming server TCP port."""
+        return self._port
+
+    def set_port(self, port: int) -> None:
+        """Updates the Wyoming server TCP port."""
+        self._port = port
 
     # ------------------------------------------------------------------
     # Public interface (implements TtsGeneratorProtocol)
@@ -319,6 +330,45 @@ class PiperAudioGenerator(AsyncLoopHostMixin, BaseAudioGenerator):
 
         return results
 
+    @staticmethod
+    def _sanitize_text_for_piper(text: str) -> str:
+        """
+        Normalises text to prevent crashing wyoming-piper's SentenceBoundaryDetector
+        (which terminates unexpectedly if any detected sentence contains no speakable phonemes).
+        """
+        # 0. Normalize unicode ellipsis and Chinese punctuation to standard ASCII
+        text = (
+            text.replace('\u2026', '...')
+            .replace('。', '.')
+            .replace('！', '!')
+            .replace('？', '?')
+        )
+        # 1. Normalize multiple dots/ellipses (e.g. '....', '.....') to standard '...'
+        text = re.sub(r'\.{4,}', '...', text)
+        # 2. Normalize dialogue dash combined with dots/ellipses at line start or before words to '— '
+        text = re.sub(r'(?m)^[ \t]*[-—–]\s*(?:\.|\u2026)+\s*', '— ', text)
+        text = re.sub(r'[-—–]\s*(?:\.|\u2026)+\s*(?=[^\W\d_])', '— ', text)
+        # 3. Strip leading sentence punctuation at start of line or string that causes
+        # wyoming-piper's SentenceBoundaryDetector to create punctuation-only sentences
+        # (which produce 0 audio frames and trigger wave.Error: '# channels not specified')
+        text = re.sub(r'(?m)^[ \t]*[.!?,;:…]+[ \t]*', '', text)
+        # 4. Drop lines with no alphanumeric characters
+        lines = [
+            line for line in text.split('\n')
+            if not line.strip() or any(c.isalnum() for c in line)
+        ]
+        return '\n'.join(lines)
+
+    def _generate_silent_mp3(
+            self,
+            mp3_tmp_path: Path,
+            duration_sec: float = NON_SPEECH_SILENCE_SECONDS,
+    ) -> None:
+        """Generates a short silent MP3 for chunks that have no speakable characters."""
+        from pydub import AudioSegment
+        silence = AudioSegment.silent(duration=int(duration_sec * 1000))
+        silence.export(str(mp3_tmp_path), format="mp3", bitrate=self.MP3_BITRATE)
+
     # ------------------------------------------------------------------
     # Single-chunk synthesis with retry
     # ------------------------------------------------------------------
@@ -337,6 +387,23 @@ class PiperAudioGenerator(AsyncLoopHostMixin, BaseAudioGenerator):
                 f"Chunk {chunk.chunk_number} text content is empty"
             )
 
+        sanitized_text = self._sanitize_text_for_piper(chunk.text_content)
+        if not any(c.isalnum() for c in sanitized_text):
+            logger.warning(
+                "Chunk %d has no speakable characters: %r. Returning silence.",
+                chunk.chunk_number, chunk.text_content,
+            )
+            output_path.mkdir(parents=True, exist_ok=True)
+            mp3_path = output_path / f"{chunk.chunk_number}.mp3"
+            mp3_tmp_path = output_path / f"{chunk.chunk_number}.mp3.tmp"
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._generate_silent_mp3, mp3_tmp_path)
+            os.replace(str(mp3_tmp_path), str(mp3_path))
+            duration = await loop.run_in_executor(
+                None, self._get_mp3_duration, str(mp3_path)
+            )
+            return str(mp3_path.absolute()), duration
+
         last_exception: Optional[BaseException] = None
         refused_in_a_row = 0
 
@@ -350,7 +417,7 @@ class PiperAudioGenerator(AsyncLoopHostMixin, BaseAudioGenerator):
 
                 async with self._semaphore:
                     await asyncio.wait_for(
-                        self._synthesise_to_wav(chunk.text_content, voice, wav_tmp_path),
+                        self._synthesise_to_wav(sanitized_text, voice, wav_tmp_path),
                         timeout=self._synthesis_timeout,
                     )
 
@@ -401,6 +468,7 @@ class PiperAudioGenerator(AsyncLoopHostMixin, BaseAudioGenerator):
             except Exception as exc:
                 refused_in_a_row = 0
                 last_exception = exc
+                self._cleanup_tmp_files(wav_tmp_path, mp3_tmp_path)
                 if not _is_piper_transient_error(exc):
                     logger.error(
                         "Fatal error on Piper chunk %d (attempt %d/%d), no retry: %s",

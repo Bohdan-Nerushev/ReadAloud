@@ -179,6 +179,34 @@ class TestCheckPrerequisites:
         assert result.is_ready is False
         assert "10200" in result.error_message
 
+    def test_dynamic_port_allocated_when_default_occupied(self):
+        docker = make_docker_manager(port_conflict=False)
+        docker.is_port_occupied_by_other.side_effect = lambda p: p == 10200
+        docker.find_available_port.return_value = 10201
+
+        service = PiperSetupService(docker_manager=docker, model_manager=make_model_manager())
+        result = service.check_prerequisites("ru", "male")
+
+        assert result.port_conflict is False
+        assert result.allocated_port == 10201
+        assert result.is_dynamic_port is True
+        assert service.piper_port == 10201
+
+    def test_container_port_adopted_when_running(self):
+        docker = make_docker_manager(port_open=True, port_conflict=False)
+        docker.is_piper_container_running.return_value = True
+        docker.get_piper_container_port.return_value = 10205
+
+        service = PiperSetupService(docker_manager=docker, model_manager=make_model_manager())
+        result = service.check_prerequisites("ru", "male")
+
+        assert result.container_running is True
+        assert result.port_conflict is False
+        assert result.allocated_port == 10205
+        assert result.is_dynamic_port is True
+        assert service.piper_port == 10205
+
+
     def test_container_running_detected(self):
         service = PiperSetupService(
             docker_manager=make_docker_manager(port_open=True),

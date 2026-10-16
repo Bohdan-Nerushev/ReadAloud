@@ -118,17 +118,84 @@ class DockerManager:
         except (ConnectionRefusedError, socket.timeout, OSError):
             return False
 
+    def is_piper_container_running(self) -> bool:
+        """
+        Returns True if the 'readaloud-piper' container exists and is running.
+        """
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", PIPER_CONTAINER_NAME, "--format", "{{.State.Running}}"],
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            return result.returncode == 0 and result.stdout.strip().lower() == "true"
+        except Exception as exc:
+            logger.debug("Piper container running check failed: %s", exc)
+            return False
+
+    def get_piper_container_port(self) -> Optional[int]:
+        """
+        If the 'readaloud-piper' container is running, returns its host port mapped to 10200/tcp.
+        Returns None if container is not running or port mapping cannot be found.
+        """
+        try:
+            result = subprocess.run(
+                ["docker", "port", PIPER_CONTAINER_NAME, "10200/tcp"],
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.strip().splitlines():
+                    parts = line.strip().rsplit(":", 1)
+                    if len(parts) == 2 and parts[1].isdigit():
+                        return int(parts[1])
+        except Exception as exc:
+            logger.debug("Failed to retrieve Piper container port: %s", exc)
+        return None
+
+    def find_available_port(self, start_port: int = PIPER_DEFAULT_PORT, max_port: int = 10300) -> Optional[int]:
+        """
+        Finds the first available TCP port on localhost starting from start_port up to max_port.
+        If all ports in range are taken, attempts to bind port 0 to get an OS-assigned free port.
+        Returns None if no port could be bound.
+        """
+        for port in range(start_port, max_port):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    continue
+            except (ConnectionRefusedError, socket.timeout, OSError):
+                pass
+
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("", port))
+                    return port
+            except OSError:
+                continue
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                return s.getsockname()[1]
+        except OSError:
+            return None
+
     def is_port_occupied_by_other(self, port: int = PIPER_DEFAULT_PORT) -> bool:
         """
-        Returns True if the port is open but NOT by our Piper compose stack.
-
-        Used to detect port conflicts before starting the container.
-        This check is a best-effort heuristic: it checks if the port is open
-        but the compose project has no running containers.
+        Returns True if the port is open but NOT by our Piper container or compose stack.
         """
         if not self.is_piper_port_open(port):
             return False
-        # Port is open — check if it's our container
+
+        # If readaloud-piper container is running, check if it owns this port
+        if self.is_piper_container_running():
+            container_port = self.get_piper_container_port()
+            if container_port == port:
+                return False
+
+        # Check docker compose services running under our compose project
         try:
             result = subprocess.run(
                 self._compose_cmd() + ["ps", "--services", "--filter", "status=running"],
@@ -137,11 +204,22 @@ class DockerManager:
                 timeout=DOCKER_COMMAND_TIMEOUT,
                 cwd=str(self._compose_file.parent),
             )
-            our_services_running = bool(result.stdout.strip())
-            return not our_services_running
+            if bool(result.stdout.strip()):
+                return False
+
+            result_plain = subprocess.run(
+                ["docker", "compose", "-f", str(self._compose_file), "ps", "--services", "--filter", "status=running"],
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+                cwd=str(self._compose_file.parent),
+            )
+            if bool(result_plain.stdout.strip()):
+                return False
         except Exception:
-            # Cannot determine — assume it belongs to us
-            return False
+            pass
+
+        return True
 
     # ------------------------------------------------------------------
     # Image management
@@ -202,15 +280,61 @@ class DockerManager:
             )
 
         logger.info("Starting Piper container via docker compose ...")
+        self._cleanup_stale_container()
         cmd = self._compose_cmd() + ["up", "-d", "--remove-orphans"]
         result = self._run_compose(cmd, extra_env=env)
         if result.returncode != 0:
-            logs = self.get_container_logs(lines=30)
-            raise PiperNotAvailableException(
-                f"docker compose up failed (exit {result.returncode}): "
-                f"{result.stderr.strip()}\nLogs:\n{logs}"
-            )
+            if "Conflict. The container name" in result.stderr and PIPER_CONTAINER_NAME in result.stderr:
+                logger.warning(
+                    "Container name collision detected for '%s'. Force-removing stale container and retrying compose up...",
+                    PIPER_CONTAINER_NAME,
+                )
+                self._remove_stale_container(PIPER_CONTAINER_NAME)
+                result = self._run_compose(cmd, extra_env=env)
+
+            if result.returncode != 0:
+                logs = self.get_container_logs(lines=30)
+                raise PiperNotAvailableException(
+                    f"docker compose up failed (exit {result.returncode}): "
+                    f"{result.stderr.strip()}\nLogs:\n{logs}"
+                )
         logger.info("Piper container started.")
+
+    def _cleanup_stale_container(self) -> None:
+        """
+        Removes any existing container named PIPER_CONTAINER_NAME if it is not
+        currently running (e.g. exited, stopped, or created by a different compose project).
+        This prevents Docker daemon name conflict errors during compose up.
+        """
+        try:
+            inspect = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Status}}", PIPER_CONTAINER_NAME],
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+            if inspect.returncode == 0:
+                status = inspect.stdout.strip().lower()
+                if status != "running":
+                    logger.info(
+                        "Found non-running container '%s' (status: %s). Removing it before compose up...",
+                        PIPER_CONTAINER_NAME, status,
+                    )
+                    self._remove_stale_container(PIPER_CONTAINER_NAME)
+        except Exception as exc:
+            logger.debug("Failed to inspect/cleanup stale container '%s': %s", PIPER_CONTAINER_NAME, exc)
+
+    def _remove_stale_container(self, name: str) -> None:
+        """Removes a container by name via docker rm -f."""
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", name],
+                capture_output=True,
+                text=True,
+                timeout=DOCKER_COMMAND_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.debug("Failed to remove container '%s': %s", name, exc)
 
     def stop_piper_compose(self) -> None:
         """

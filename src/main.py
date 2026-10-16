@@ -176,7 +176,12 @@ class ReadAloudApplication:
     ) -> None:
         """Handles error signals."""
         logging.error(f"Error signal received: {error_message}")
-        QMessageBox.warning(self._window, "Generation Error", error_message)
+        current_task = self._controller.get_current_task()
+        has_more = self._controller.has_pending_tasks()
+        # Avoid blocking batch processing when other tasks are running or waiting in the queue.
+        # Failed tasks are clearly indicated in the queue list with an error message and a retry button.
+        if current_task is None and not has_more:
+            QMessageBox.warning(self._window, "Generation Error", error_message)
 
     def _on_queue_status_changed(
             self,

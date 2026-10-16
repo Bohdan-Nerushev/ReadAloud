@@ -174,6 +174,44 @@ class TestStartPiperCompose:
             with pytest.raises(PiperNotAvailableException):
                 manager.start_piper_compose()
 
+    def test_cleans_up_stale_container_removes_exited(self, manager: DockerManager):
+        with (
+            patch("subprocess.run") as mock_subproc,
+        ):
+            # First call is inspect (returncode=0, stdout="exited\n")
+            # Second call is docker rm -f
+            mock_subproc.side_effect = [
+                _make_proc(0, "exited\n"),
+                _make_proc(0, ""),
+            ]
+            manager._cleanup_stale_container()
+            assert mock_subproc.call_count == 2
+            rm_args = mock_subproc.call_args_list[1][0][0]
+            assert rm_args[:3] == ["docker", "rm", "-f"]
+
+    def test_cleanup_stale_container_skips_running(self, manager: DockerManager):
+        with patch("subprocess.run", return_value=_make_proc(0, "running\n")) as mock_subproc:
+            manager._cleanup_stale_container()
+            assert mock_subproc.call_count == 1  # Only inspect called, rm not called
+
+    def test_retries_compose_up_on_conflict_error(self, manager: DockerManager, compose_file: Path):
+        conflict_msg = (
+            'Conflict. The container name "/readaloud-piper" is already in use by container "123".'
+        )
+        with (
+            patch.object(manager, "_compose_cmd", return_value=["docker", "compose", "-f", str(compose_file)]),
+            patch.object(manager, "_cleanup_stale_container"),
+            patch.object(manager, "_remove_stale_container") as mock_rm,
+            patch.object(manager, "_run_compose", side_effect=[
+                _make_proc(1, "", conflict_msg),
+                _make_proc(0, ""),
+            ]) as mock_run,
+        ):
+            manager.start_piper_compose()
+            assert mock_run.call_count == 2
+            mock_rm.assert_called_once_with("readaloud-piper")
+
+
 
 # ---------------------------------------------------------------------------
 # Compose command version detection
@@ -233,3 +271,51 @@ class TestCheckPrerequisites:
             ok, msg = manager.check_prerequisites()
             assert ok is False
             assert PIPER_IMAGE in msg
+
+
+# ---------------------------------------------------------------------------
+# Piper container inspection and dynamic port methods
+# ---------------------------------------------------------------------------
+
+class TestContainerStatusAndDynamicPort:
+    def test_is_piper_container_running_true(self, manager: DockerManager):
+        with patch("subprocess.run", return_value=_make_proc(0, "true\n")):
+            assert manager.is_piper_container_running() is True
+
+    def test_is_piper_container_running_false(self, manager: DockerManager):
+        with patch("subprocess.run", return_value=_make_proc(0, "false\n")):
+            assert manager.is_piper_container_running() is False
+
+    def test_is_piper_container_running_error(self, manager: DockerManager):
+        with patch("subprocess.run", return_value=_make_proc(1, "", "No such container")):
+            assert manager.is_piper_container_running() is False
+
+    def test_get_piper_container_port_success(self, manager: DockerManager):
+        with patch("subprocess.run", return_value=_make_proc(0, "0.0.0.0:10200\n")):
+            assert manager.get_piper_container_port() == 10200
+
+    def test_get_piper_container_port_failure(self, manager: DockerManager):
+        with patch("subprocess.run", return_value=_make_proc(1, "", "Error")):
+            assert manager.get_piper_container_port() is None
+
+    def test_find_available_port_returns_port(self, manager: DockerManager):
+        port = manager.find_available_port(start_port=20000, max_port=20050)
+        assert port is not None
+        assert 20000 <= port <= 20050
+
+    def test_is_port_occupied_by_other_when_our_container_owns_it(self, manager: DockerManager):
+        with (
+            patch.object(manager, "is_piper_port_open", return_value=True),
+            patch.object(manager, "is_piper_container_running", return_value=True),
+            patch.object(manager, "get_piper_container_port", return_value=10200),
+        ):
+            assert manager.is_port_occupied_by_other(10200) is False
+
+    def test_is_port_occupied_by_other_when_foreign_process_owns_it(self, manager: DockerManager):
+        with (
+            patch.object(manager, "is_piper_port_open", return_value=True),
+            patch.object(manager, "is_piper_container_running", return_value=False),
+            patch("subprocess.run", return_value=_make_proc(0, "")),
+        ):
+            assert manager.is_port_occupied_by_other(10200) is True
+

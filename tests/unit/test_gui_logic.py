@@ -192,6 +192,36 @@ class TestGUILogic(unittest.TestCase):
         finally:
             Path(tf.name).unlink(missing_ok=True)
 
+    def test_on_error_occurred_suppresses_dialog_when_queue_busy_or_pending(self):
+        """Verifies that _on_error_occurred does not block with QMessageBox when other tasks exist."""
+        from unittest.mock import patch, MagicMock
+        from src.main import ReadAloudApplication
+        
+        mock_window = MagicMock()
+        mock_controller = MagicMock()
+        app_coord = ReadAloudApplication.__new__(ReadAloudApplication)
+        app_coord._window = mock_window
+        app_coord._controller = mock_controller
+        
+        with patch("src.main.QMessageBox.warning") as mock_box:
+            # Case 1: Next task is currently running
+            mock_controller.get_current_task.return_value = MagicMock()
+            mock_controller.has_pending_tasks.return_value = False
+            app_coord._on_error_occurred("Task 1 error")
+            mock_box.assert_not_called()
+            
+            # Case 2: Next task is pending in queue
+            mock_controller.get_current_task.return_value = None
+            mock_controller.has_pending_tasks.return_value = True
+            app_coord._on_error_occurred("Task 2 error")
+            mock_box.assert_not_called()
+            
+            # Case 3: Queue is completely idle (last or only task failed)
+            mock_controller.get_current_task.return_value = None
+            mock_controller.has_pending_tasks.return_value = False
+            app_coord._on_error_occurred("Fatal error")
+            mock_box.assert_called_once_with(mock_window, "Generation Error", "Fatal error")
+
 
 if __name__ == '__main__':
     unittest.main()

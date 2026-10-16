@@ -380,5 +380,28 @@ class TestClearQueueStaysExplicit(LifecycleTestCase):
         self.assertFalse(any(d.exists() for d in failed_dirs + running_dirs))
 
 
+    def test_has_pending_tasks(self):
+        first, second = self.add("A"), self.add("B")
+        self.assertTrue(self.controller.has_pending_tasks())
+        # First task running, second pending
+        self.controller._handle_task_failure("error on A")
+        # Second task now running, none pending
+        self.assertFalse(self.controller.has_pending_tasks())
+
+    def test_error_occurred_emitted_after_transition_to_next_task(self):
+        first, second = self.add("A"), self.add("B")
+        observed_current_in_slot = []
+
+        def on_error(msg):
+            observed_current_in_slot.append(self.controller.get_current_task())
+
+        self.controller.errorOccurred.connect(on_error)
+        self.controller._handle_task_failure("failure in A")
+
+        self.assertEqual(len(observed_current_in_slot), 1)
+        # When errorOccurred is received, controller has ALREADY switched to second task B!
+        self.assertIs(observed_current_in_slot[0], second)
+
+
 if __name__ == "__main__":
     unittest.main()

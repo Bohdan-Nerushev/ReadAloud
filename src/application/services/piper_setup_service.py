@@ -49,6 +49,8 @@ class PiperPrerequisiteResult:
     model_present: bool = False
     missing_model_files: List[str] = field(default_factory=list)
     port_conflict: bool = False
+    allocated_port: int = PIPER_DEFAULT_PORT
+    is_dynamic_port: bool = False
     error_message: Optional[str] = None
 
     @property
@@ -67,7 +69,7 @@ class PiperPrerequisiteResult:
 
     @property
     def can_start_container(self) -> bool:
-        """True if Docker is available and no port conflict on 10200."""
+        """True if Docker is available and no port conflict on the allocated port."""
         return self.docker_available and not self.port_conflict
 
 
@@ -98,6 +100,41 @@ class PiperSetupService(QObject):
         self._model_manager = model_manager
         self._piper_port = piper_port
 
+    @property
+    def piper_port(self) -> int:
+        """Port currently allocated for the Piper container."""
+        return self._piper_port
+
+    def resolve_piper_port(self) -> int:
+        """
+        Determines the appropriate port for Piper dynamically:
+        1. If readaloud-piper container is already running, adopt its mapped host port.
+        2. If the current port is not occupied by another process, keep it.
+        3. If occupied by a foreign process, dynamically find the next available port.
+        """
+        if hasattr(self._docker_manager, "is_piper_container_running") and self._docker_manager.is_piper_container_running() is True:
+            container_port = self._docker_manager.get_piper_container_port()
+            if isinstance(container_port, int) and not isinstance(container_port, bool):
+                self._piper_port = container_port
+                return container_port
+
+        if not self._docker_manager.is_port_occupied_by_other(self._piper_port):
+            return self._piper_port
+
+        # Port occupied by another process -> dynamically allocate a free port
+        if hasattr(self._docker_manager, "find_available_port"):
+            free_port = self._docker_manager.find_available_port(start_port=PIPER_DEFAULT_PORT)
+            if isinstance(free_port, int) and not isinstance(free_port, bool):
+                if not self._docker_manager.is_port_occupied_by_other(free_port):
+                    logger.info(
+                        "Default port %d is occupied. Dynamically allocated port %d for Piper.",
+                        self._piper_port, free_port,
+                    )
+                    self._piper_port = free_port
+                    return free_port
+
+        return self._piper_port
+
     # ------------------------------------------------------------------
     # Prerequisite checks
     # ------------------------------------------------------------------
@@ -110,18 +147,18 @@ class PiperSetupService(QObject):
           1. Docker binary is in PATH and daemon responds.
           2. rhasspy/wyoming-piper image is present locally.
           3. Voice model files for (language, gender) are present and non-empty.
-          4. No port conflict on 10200 from a non-Piper process.
+          4. No port conflict on the allocated port from a non-Piper process.
           5. Whether the Piper container is already running.
 
         This method is safe to call from a background thread.
         Emits ``prerequisiteCheckCompleted`` when done.
 
         Args:
-            language: ISO language code to check model for (e.g. "ru").
-            gender:   "male" or "female".
+          language: ISO language code to check model for (e.g. "ru").
+          gender:   "male" or "female".
 
         Returns:
-            PiperPrerequisiteResult with all fields populated.
+          PiperPrerequisiteResult with all fields populated.
         """
         result = PiperPrerequisiteResult()
 
@@ -137,31 +174,32 @@ class PiperSetupService(QObject):
         # 2. Image availability
         result.image_available = self._docker_manager.is_piper_image_available()
 
-        # 3. Container running check
+        # 3. Dynamic port resolution
+        resolved_port = self.resolve_piper_port()
+        result.allocated_port = resolved_port
+        result.is_dynamic_port = (resolved_port != PIPER_DEFAULT_PORT)
+
+        # 4. Container running and port status checks
         port_open = self._docker_manager.is_piper_port_open(self._piper_port)
-        # An open port only proves a Piper container if nobody else owns it.
-        foreign_owner = port_open and self._docker_manager.is_port_occupied_by_other(self._piper_port)
-        result.container_running = port_open and not foreign_owner
+        foreign_owner = self._docker_manager.is_port_occupied_by_other(self._piper_port)
 
         if foreign_owner:
             result.port_conflict = True
+            result.container_running = False
             result.error_message = f"Port {self._piper_port} is occupied by another process."
-        elif result.container_running:
-            # If the Piper container is open and responding, it is actively serving synthesis.
+        elif port_open:
+            result.container_running = True
             result.port_conflict = False
             result.model_present = True
             result.error_message = ""
         else:
+            result.container_running = False
+            result.port_conflict = False
             if not result.image_available:
                 result.error_message = (
                     "The 'rhasspy/wyoming-piper' Docker image is not present locally "
                     "(will be pulled automatically)."
                 )
-
-            # Check port conflict only if port is open but NOT by running Piper container
-            result.port_conflict = self._docker_manager.is_port_occupied_by_other(self._piper_port)
-            if result.port_conflict:
-                result.error_message = f"Port {self._piper_port} is occupied by another process."
 
             # Model presence check
             if not self._model_manager.is_language_supported(language):
@@ -177,9 +215,10 @@ class PiperSetupService(QObject):
                     result.missing_model_files = self._model_manager.get_missing_model_files(voice)
 
         logger.info(
-            "Piper prerequisite check: docker=%s image=%s model=%s conflict=%s running=%s",
+            "Piper prerequisite check: docker=%s image=%s model=%s conflict=%s running=%s port=%d",
             result.docker_available, result.image_available,
             result.model_present, result.port_conflict, result.container_running,
+            result.allocated_port,
         )
         self.prerequisiteCheckCompleted.emit(result)
         return result

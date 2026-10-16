@@ -345,3 +345,84 @@ class TestLoopLifecycle:
             assert res == 5.0
             mock_get.assert_called_once_with("/tmp/test.mp3")
         gen.close()
+
+
+# ---------------------------------------------------------------------------
+# Text sanitization and non-speech handling
+# ---------------------------------------------------------------------------
+
+class TestTextSanitizationAndSilence:
+    def test_sanitize_text_for_piper_normalizes_ellipses_and_dashes(self):
+        """_sanitize_text_for_piper collapses repeated dots and dialogue dash ellipses."""
+        text = "Взошла луна…. Потом\n-… После того\nLine 1\n— — —\nLine 2\n(Гендо открывает кейс…)\nТест。Два！Три？"
+        sanitized = PiperAudioGenerator._sanitize_text_for_piper(text)
+        assert "луна..." in sanitized
+        assert "— После того" in sanitized
+        assert "— — —" not in sanitized
+        assert "Line 1\nLine 2" in sanitized
+        assert "(Гендо открывает кейс...)" in sanitized
+        assert "Тест.Два!Три?" in sanitized
+
+    def test_sanitize_text_for_piper_strips_leading_punctuation_on_lines(self):
+        """_sanitize_text_for_piper strips leading punctuation marks at line and string starts."""
+        text = "Line 1\n\n. С незаинтересованным видом\n\n! На это как будто\n\n? Кто здесь\n\n... Текст далі"
+        sanitized = PiperAudioGenerator._sanitize_text_for_piper(text)
+        assert ". С" not in sanitized
+        assert "С незаинтересованным видом" in sanitized
+        assert "! На" not in sanitized
+        assert "На это как будто" in sanitized
+        assert "? Кто" not in sanitized
+        assert "Кто здесь" in sanitized
+        assert "... Текст" not in sanitized
+        assert "Текст далі" in sanitized
+
+    def test_sanitize_text_for_piper_preserves_dialogue_dashes(self):
+        """Dialogue dashes are preserved, but leading punctuation before them is stripped."""
+        text = "— Привет\n\n. — Как дела?"
+        sanitized = PiperAudioGenerator._sanitize_text_for_piper(text)
+        assert "— Привет" in sanitized
+        assert "— Как дела?" in sanitized
+        assert ". —" not in sanitized
+
+    def test_non_speech_chunk_returns_silent_mp3_without_synthesising(
+        self, generator: PiperAudioGenerator, output_dir: str
+    ):
+        """A chunk with no alphanumeric characters returns short silence without calling Wyoming."""
+        chunk = AudioChunk(chunk_number=42, text_content="— ... —")
+
+        with patch.object(generator, "_synthesise_to_wav", new_callable=AsyncMock) as mock_synth:
+            results = generator.generate_audio_batch([chunk], "ru", "male", output_dir)
+
+        mock_synth.assert_not_called()
+        assert results[0] is not None
+        mp3_path, duration = results[0]
+        assert Path(mp3_path).exists()
+        assert duration >= 0.0
+
+    def test_sanitized_text_is_passed_to_synthesise_to_wav(
+        self, generator: PiperAudioGenerator, output_dir: str
+    ):
+        """Sanitized text is sent to _synthesise_to_wav rather than raw text with problematic tokens."""
+        chunk = AudioChunk(chunk_number=1, text_content="Задумка:\n\n-… После того, как я возьму интервью")
+        called_texts = []
+
+        async def fake_synth(text, voice, wav_path):
+            called_texts.append(text)
+            wav_path.write_bytes(b"RIFF dummy wav")
+
+        def fake_convert(wav_path, mp3_tmp_path):
+            mp3_tmp_path.write_bytes(b"MP3_DATA")
+
+        with (
+            patch.object(generator, "_synthesise_to_wav", side_effect=fake_synth),
+            patch.object(generator, "_convert_wav_to_mp3", side_effect=fake_convert),
+            patch.object(generator, "_get_mp3_duration", return_value=1.5),
+        ):
+            results = generator.generate_audio_batch([chunk], "ru", "male", output_dir)
+
+        assert results[0] is not None
+        assert len(called_texts) == 1
+        assert "— После того" in called_texts[0]
+        assert "-…" not in called_texts[0]
+
+

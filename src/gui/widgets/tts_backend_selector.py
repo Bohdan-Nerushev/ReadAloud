@@ -228,8 +228,16 @@ class TtsBackendSelector(QWidget):
         # queue), so the indicator follows the real state instead of relying on UI events.
         self._model_state_timer = QTimer(self)
         self._model_state_timer.setInterval(MODEL_STATE_POLL_MS)
-        self._model_state_timer.timeout.connect(self._poll_xtts_model_state)
+        self._model_state_timer.timeout.connect(self._poll_engine_state)
         self._model_state_timer.start()
+
+        if self._piper_setup_service is not None:
+            try:
+                self._piper_setup_service.prerequisiteCheckCompleted.connect(
+                    self._on_piper_check_finished
+                )
+            except Exception:
+                pass
 
     _PANEL_STYLE = """
         QFrame#StatusPanel {
@@ -489,6 +497,7 @@ class TtsBackendSelector(QWidget):
         self._show_error(self._status_error, "")
 
     def _update_piper_status_display(self, result: PiperPrerequisiteResult) -> None:
+        self._last_piper_result = result
         ok = "<span style='color: green'>✅</span>"
         fail = "<span style='color: red'>❌</span>"
         warn = "<span style='color: orange'>⚠️</span>"
@@ -501,16 +510,25 @@ class TtsBackendSelector(QWidget):
             f"Voice model: {ok if result.model_present else fail}"
         )
 
+        port = result.allocated_port or (
+            self._piper_setup_service.piper_port if self._piper_setup_service else PIPER_DEFAULT_PORT
+        )
+        port_suffix = f" (dynamic port {port})" if result.is_dynamic_port else f" (port {port})"
+
         if result.port_conflict:
             self._status_container.setText(
-                f"Port {PIPER_DEFAULT_PORT}: {warn} occupied by another process"
+                f"Port {port}: {warn} occupied by another process"
             )
         elif result.container_running:
             self._status_container.setText(
-                f"Container: {ok} running (port {PIPER_DEFAULT_PORT})"
+                f"Container: {ok} running{port_suffix}"
             )
         else:
-            self._status_container.setText(f"Container: {fail} not running")
+            off = "<span style='color: gray'>○</span>"
+            alloc_info = f" (dynamic port {port})" if result.is_dynamic_port else ""
+            self._status_container.setText(
+                f"Container: {off} stopped (starts on generation){alloc_info}"
+            )
 
         self._show_error(self._status_error, result.error_message or "")
         self._btn_piper_recheck.setEnabled(True)
@@ -584,9 +602,39 @@ class TtsBackendSelector(QWidget):
         self._generation_active = active
         self.refresh_xtts_model_state()
 
-    def _poll_xtts_model_state(self) -> None:
+    def _poll_engine_state(self) -> None:
         if self._xtts_panel.isVisible() and not self._xtts_busy:
             self.refresh_xtts_model_state()
+        if self._piper_panel.isVisible():
+            self.refresh_piper_container_state()
+
+    def refresh_piper_container_state(self) -> None:
+        """Dynamically updates the Piper container status indicator."""
+        if not self._last_piper_result or not self._last_piper_result.docker_available:
+            return
+        if self._last_piper_result.port_conflict:
+            return
+        port = self._last_piper_result.allocated_port or (
+            self._piper_setup_service.piper_port if self._piper_setup_service else PIPER_DEFAULT_PORT
+        )
+        try:
+            running = self._piper_setup_service._docker_manager.is_piper_port_open(port)
+        except Exception:
+            return
+        if self._last_piper_result.container_running != running:
+            self._last_piper_result.container_running = running
+            ok = "<span style='color: green'>✅</span>"
+            off = "<span style='color: gray'>○</span>"
+            port_suffix = f" (dynamic port {port})" if self._last_piper_result.is_dynamic_port else f" (port {port})"
+            if running:
+                self._status_container.setText(
+                    f"Container: {ok} running{port_suffix}"
+                )
+            else:
+                alloc_info = f" (dynamic port {port})" if self._last_piper_result.is_dynamic_port else ""
+                self._status_container.setText(
+                    f"Container: {off} stopped (starts on generation){alloc_info}"
+                )
 
     def refresh_xtts_model_state(self) -> None:
         """Re-reads the loaded state and updates the indicator and Unload button."""

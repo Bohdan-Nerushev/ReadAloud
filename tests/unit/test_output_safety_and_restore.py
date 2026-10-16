@@ -310,3 +310,35 @@ class TestStatusPanelsShowReason:
         sel._update_piper_status_display(PiperPrerequisiteResult(error_message="old"))
         sel._set_piper_checking_state()
         assert sel._status_error.isHidden()
+
+    def test_piper_container_stopped_status_is_neutral(self):
+        from src.application.services.piper_setup_service import PiperPrerequisiteResult
+        sel = self._selector()
+        sel._update_piper_status_display(PiperPrerequisiteResult(docker_available=True, image_available=True,
+                                                                 model_present=True, container_running=False))
+        text = sel._status_container.text()
+        assert "stopped" in text
+        assert "starts on generation" in text
+        assert "❌" not in text
+
+    def test_piper_container_running_status(self):
+        from src.application.services.piper_setup_service import PiperPrerequisiteResult
+        sel = self._selector()
+        sel._update_piper_status_display(PiperPrerequisiteResult(docker_available=True, image_available=True,
+                                                                 model_present=True, container_running=True))
+        text = sel._status_container.text()
+        assert "running" in text
+        assert "✅" in text
+
+    def test_piper_container_dynamic_refresh(self):
+        from src.application.services.piper_setup_service import PiperPrerequisiteResult
+        sel = self._selector()
+        sel._update_piper_status_display(PiperPrerequisiteResult(docker_available=True, image_available=True,
+                                                                 model_present=True, container_running=False))
+        assert "stopped" in sel._status_container.text()
+
+        # Simulate port opening (container started)
+        sel._piper_setup_service._docker_manager.is_piper_port_open.return_value = True
+        sel.refresh_piper_container_state()
+        assert "running" in sel._status_container.text()
+        assert "✅" in sel._status_container.text()

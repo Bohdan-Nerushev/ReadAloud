@@ -53,5 +53,43 @@ class TestTextProcessor(unittest.TestCase):
         expected = "Chapter 1\n\nText with  dividers and  headers."
         self.assertEqual(self.processor.process_text(input_text), expected)
 
+    def test_process_text_normalizes_ellipses_and_dots(self):
+        """Verifies that consecutive dots and ellipses (e.g. …., ….., ..) collapse to '...'."""
+        input_text = "Взошла луна…. Потом появился густой туман."
+        expected = "Взошла луна... Потом появился густой туман."
+        self.assertEqual(self.processor.process_text(input_text), expected)
+
+        input_text_dots = "Точка..... Следующая"
+        expected_dots = "Точка... Следующая"
+        self.assertEqual(self.processor.process_text(input_text_dots), expected_dots)
+
+    def test_process_text_cleans_dialogue_dash_with_ellipsis(self):
+        """Verifies that dialogue dashes followed by ellipses (-…, —...) are cleaned to '— '."""
+        input_text = "Задумка:\n\n-… После того, как я возьму интервью"
+        expected = "Задумка:\n\n— После того, как я возьму интервью"
+        self.assertEqual(self.processor.process_text(input_text), expected)
+
+        input_inline = "Сказал он: — ... Привет!"
+        expected_inline = "Сказал он: — Привет!"
+        self.assertEqual(self.processor.process_text(input_inline), expected_inline)
+
+    def test_process_text_drops_lines_without_alphanumeric_characters(self):
+        """Verifies that lines without any speakable characters (dashes, symbols, dots) are dropped."""
+        input_text = "Глава 1\n\n— — —\n\nТекст главы."
+        expected = "Глава 1\n\nТекст главы."
+        self.assertEqual(self.processor.process_text(input_text), expected)
+
+        input_dots = "Раздел 1\n\n...\n\nРаздел 2"
+        expected_dots = "Раздел 1\n\nРаздел 2"
+        self.assertEqual(self.processor.process_text(input_dots), expected_dots)
+
+    def test_process_text_strips_leading_punctuation_on_lines(self):
+        """Verifies that punctuation marks at the start of a line or after line breaks are stripped."""
+        input_text = "Глава 1\n\n. С незаинтересованным видом\n\n! На это как будто\n\n... И они пошли"
+        expected = "Глава 1\n\nС незаинтересованным видом\n\nНа это как будто\n\nИ они пошли"
+        self.assertEqual(self.processor.process_text(input_text), expected)
+
+
 if __name__ == '__main__':
     unittest.main()
+

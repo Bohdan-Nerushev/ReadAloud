@@ -81,6 +81,12 @@ class QueueService(QObject):
         self._current_task = task
         return self._current_task
 
+    def has_pending_tasks(self) -> bool:
+        """
+        Returns True if there are unpaused tasks waiting in the queue.
+        """
+        return any(task.status != TaskStatus.PAUSED for task in self._task_queue)
+
     def toggle_task_pause(self, task_id: str) -> Optional[GenerationTask]:
         """
         Toggles the pause or retry status of a task in the queue.

@@ -194,6 +194,10 @@ class ApplicationController(QObject):
         """Returns the current task being processed."""
         return self._get_current_task()
 
+    def has_pending_tasks(self) -> bool:
+        """Returns True if there are unpaused tasks waiting in the queue."""
+        return self._queue_service.has_pending_tasks()
+
     def _get_current_task(self) -> Optional[GenerationTask]:
         """Returns the current task being processed."""
         return self._queue_service.get_current_task()
@@ -293,7 +297,6 @@ class ApplicationController(QObject):
     def _on_preparation_error(self, error_msg: str) -> None:
         """Called when preparation worker fails."""
         logging.error(f"Preparation worker error: {error_msg}")
-        self.errorOccurred.emit(f"Preparation failed: {error_msg}")
         self._handle_task_failure(error_msg)
 
     def _start_generation_process(self) -> None:
@@ -360,6 +363,11 @@ class ApplicationController(QObject):
 
     def _begin_generation(self, task: GenerationTask) -> None:
         """Starts the GenerationService once the backend is known to be ready."""
+        if task.config.tts_backend == TtsBackend.PIPER and self._piper_setup_service:
+            piper_gen = getattr(self._generation_service, "_audio_generator", None)
+            if piper_gen and hasattr(piper_gen, "set_port"):
+                piper_gen.set_port(self._piper_setup_service.piper_port)
+
         logging.info(
             "Starting generation: task %s, backend=%s, lang=%s",
             task.id, task.config.tts_backend.value, task.config.language,
@@ -686,7 +694,7 @@ class ApplicationController(QObject):
             
         except Exception as e:
             logging.error(f"Failed to prepare final generation: {e}")
-            self.errorOccurred.emit(f"Failed to prepare final generation: {str(e)}")
+            self._handle_task_failure(f"Failed to prepare final generation: {str(e)}")
 
     def _execute_assembly_workflow(self, output_path: Path, speed: float, correlation_id: str) -> None:
         """
@@ -891,10 +899,10 @@ class ApplicationController(QObject):
         self._is_stopped = True
         self._update_task_manifest(force=True)
         self._queue_service.update_task_status(TaskStatus.FAILED, error_msg)
-        self.errorOccurred.emit(error_msg)
         # Keep in-flight workers of the dead task from reporting into the next one.
         self._generation_service.stop()
         self._finalize_task()
+        self.errorOccurred.emit(error_msg)
 
     def _finalize_task(self) -> None:
         """Clean up current task and process next."""
@@ -1051,5 +1059,4 @@ class ApplicationController(QObject):
         """Handles errors occurring during background assembly."""
         error_msg = str(error)
         logging.error(f"Assembly failed: {error}", exc_info=True)
-        self.errorOccurred.emit(f"Failed to finalize generation: {error_msg}")
-        self._handle_task_failure(error_msg)
+        self._handle_task_failure(f"Failed to finalize generation: {error_msg}")

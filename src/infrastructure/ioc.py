@@ -110,7 +110,10 @@ class Container:
         here — that is triggered explicitly via XttsSetupService.unload_model().
         """
         if backend == TtsBackend.PIPER:
-            return self.piper_audio_generator
+            gen = self.piper_audio_generator
+            if self._piper_setup_service:
+                gen.set_port(self._piper_setup_service.piper_port)
+            return gen
         if backend == TtsBackend.XTTS:
             return self.xtts_audio_generator
         return self.audio_generator
